@@ -48,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String get _effectiveImageApiKey => _imageApiKey.trim().isEmpty ? _apiKey : _imageApiKey.trim();
   String get _effectiveImageBaseUrl => _imageBaseUrl.trim().isEmpty ? _baseUrl : _imageBaseUrl.trim();
+  String get _effectiveImageModel => _apiService.normalizeImageModel(_imageModel);
 
   @override
   void initState() {
@@ -158,7 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _messages.add(placeholder));
     _scrollBottom();
 
-    final url = await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _imageModel);
+    final url = await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel);
     if (!mounted) return;
     setState(() {
       final index = _messages.indexWhere((m) => m.id == placeholder.id);
@@ -178,7 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _messages.add(assistant));
     _scrollBottom();
 
-    final model = userMessage.base64Image != null ? 'gpt-4o' : _chatModel;
+    final model = _apiService.normalizeChatModel(_chatModel);
     final stream = _apiService.generateChatStream(_messages.sublist(0, _messages.length - 1), _apiKey, _baseUrl, model);
     await for (final chunk in stream) {
       if (!mounted) return;
@@ -453,24 +454,43 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Icon(user ? Icons.person_rounded : Icons.auto_awesome, color: Colors.white, size: 18),
       );
 
-  Widget _imageMessage(String url) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.network(
-            url,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const Text('图片加载失败，请检查网络连接或 API Key。', style: TextStyle(color: Colors.redAccent)),
-            loadingBuilder: (_, child, progress) => progress == null ? child : const SizedBox(height: 220, child: Center(child: CircularProgressIndicator(color: _secondary))),
-          ),
-        ),
-        const SizedBox(height: 10),
+  Widget _imageMessage(String url) {
+    final isDataImage = url.startsWith('data:image') && url.contains('base64,');
+    Widget image;
+    if (isDataImage) {
+      try {
+        final b64 = url.substring(url.indexOf('base64,') + 'base64,'.length);
+        image = Image.memory(
+          base64Decode(b64),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const Text('图片解析失败，请检查接口返回内容。', style: TextStyle(color: Colors.redAccent)),
+        );
+      } catch (_) {
+        image = const Text('图片解析失败，请检查接口返回内容。', style: TextStyle(color: Colors.redAccent));
+      }
+    } else {
+      image = Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Text('图片加载失败，请检查网络连接或 API Key。', style: TextStyle(color: Colors.redAccent)),
+        loadingBuilder: (_, child, progress) => progress == null ? child : const SizedBox(height: 220, child: Center(child: CircularProgressIndicator(color: _secondary))),
+      );
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ClipRRect(borderRadius: BorderRadius.circular(18), child: image),
+      const SizedBox(height: 10),
+      if (!isDataImage)
         FilledButton.icon(
           onPressed: () => _saveImage(url),
           icon: const Icon(Icons.download_rounded, color: Colors.white, size: 18),
           label: const Text('保存到相册', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
           style: FilledButton.styleFrom(backgroundColor: _success),
-        ),
-      ]);
+        )
+      else
+        const Text('图片由接口以 base64 返回，已直接显示。', style: TextStyle(color: _muted, fontSize: 12)),
+    ]);
+  }
 
   Widget _fileChip(String path) => Padding(
         padding: const EdgeInsets.only(top: 10),
@@ -669,7 +689,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 final newBase = urlCtrl.text.trim().isEmpty ? 'https://api.openai.com/v1' : urlCtrl.text.trim();
                 final newImageBase = imageUrlCtrl.text.trim();
                 final newChat = chatCtrl.text.trim().isEmpty ? 'gpt-4o-mini' : chatCtrl.text.trim();
-                final newImage = imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim();
+                final rawImageModel = imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim();
+                final newImage = _apiService.normalizeImageModel(rawImageModel);
                 await _settingsService.saveSettings(
                   apiKey: keyCtrl.text.trim(),
                   imageApiKey: newImageKey,
