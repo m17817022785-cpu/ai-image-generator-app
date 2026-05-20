@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Luna AI Web Preview</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon">✦</div>
+        <div>
+          <div class="brand-title">Luna AI</div>
+          <div class="brand-subtitle">Chat · Vision · Image</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="clearBtn" class="icon-btn" title="清空对话">⌫</button>
+        <button id="settingsBtn" class="icon-btn" title="API 设置">⚙</button>
+      </div>
+    </header>
+
+    <section class="hero-card">
+      <div class="hero-row">
+        <div>
+          <div id="modeTitle" class="hero-title">聊天与生图已合并，像聊天一样创作</div>
+          <div class="hero-desc">这是静态网页版预览，用来验证 UI 效果和交互感觉。</div>
+        </div>
+        <button id="apiStatus" class="status-pill warning">🔑 未配置</button>
+      </div>
+
+      <div class="quick-grid">
+        <button class="quick-card" data-action="chat">
+          <span class="quick-icon cyan">💬</span>
+          <strong>聊天</strong>
+          <small>直接提问</small>
+        </button>
+        <button class="quick-card" data-action="image">
+          <span class="quick-icon purple">🎨</span>
+          <strong>生图</strong>
+          <small>描述画面</small>
+        </button>
+        <button class="quick-card" data-action="vision">
+          <span class="quick-icon green">🖼</span>
+          <strong>看图</strong>
+          <small>上传分析</small>
+        </button>
+      </div>
+    </section>
+
+    <section id="chatArea" class="chat-area">
+      <div id="emptyState" class="empty-state">
+        <div class="empty-card">
+          <div class="empty-icon">✦</div>
+          <h1>今天想创造什么？</h1>
+          <p>同一个输入框即可聊天、生成图片、上传图片分析。</p>
+          <button id="openSettingsFromEmpty" class="ghost-btn">⚙ 打开 API 设置</button>
+        </div>
+        <div class="suggestions-title">试试这些灵感</div>
+        <button class="suggestion">↖ 总结一下今天的待办</button>
+        <button class="suggestion">↖ 画一张星空下的未来城市</button>
+        <button class="suggestion">↖ 帮我写一个短视频脚本</button>
+      </div>
+      <div id="messages" class="messages" hidden></div>
+    </section>
+
+    <div id="loadingBar" class="loading-bar" hidden><span></span></div>
+
+    <footer class="composer-wrap">
+      <div id="attachmentPreview" class="attachment-preview" hidden>
+        <div class="attachment-icon">🖼</div>
+        <div class="attachment-text">
+          <strong>已选择待分析图片</strong>
+          <span id="attachmentName">preview-image.png</span>
+        </div>
+        <button id="removeAttachment" class="mini-close">×</button>
+      </div>
+      <div class="composer">
+        <button id="attachBtn" class="composer-icon cyan" title="选择图片进行分析">🖼</button>
+        <button id="drawBtn" class="composer-icon" title="下一条按生图处理">🖌</button>
+        <textarea id="promptInput" rows="1" placeholder="输入消息，或说“画一张…”"></textarea>
+        <button id="sendBtn" class="send-btn" title="发送">↑</button>
+      </div>
+    </footer>
+  </main>
+
+  <dialog id="settingsDialog" class="settings-dialog">
+    <form method="dialog" class="dialog-card">
+      <div class="dialog-title">⚙ API 配置参数</div>
+      <label><span>API Key</span><input id="apiKeyInput" type="password" placeholder="sk-xxxx" /></label>
+      <label><span>API Base URL</span><input id="baseUrlInput" placeholder="https://api.openai.com/v1" /></label>
+      <label><span>聊天模型</span><input id="chatModelInput" placeholder="gpt-4o-mini" /></label>
+      <label><span>生图模型</span><input id="imageModelInput" placeholder="dall-e-3" /></label>
+      <div class="dialog-actions">
+        <button value="cancel" class="text-btn">取消</button>
+        <button id="saveSettingsBtn" value="default" class="primary-btn">保存修改</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
