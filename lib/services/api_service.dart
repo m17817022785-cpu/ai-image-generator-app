@@ -36,9 +36,40 @@ class ApiService {
     return value;
   }
 
-  Uri _endpoint(String baseUrl, String path) {
-    return Uri.parse('${_normalizeBaseUrl(baseUrl)}$path');
+  bool _pathEndsWithAny(String baseUrl, List<String> suffixes) {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    final uri = Uri.tryParse(normalized);
+    final path = (uri?.path ?? '').toLowerCase();
+    return suffixes.any((suffix) => path == suffix || path.endsWith(suffix));
   }
+
+  bool _isFullChatEndpoint(String baseUrl) {
+    return _pathEndsWithAny(baseUrl, ['/chat', '/chat/completions', '/completions']);
+  }
+
+  bool _isFullImageGenerationEndpoint(String baseUrl) {
+    return _pathEndsWithAny(baseUrl, ['/images/generations']);
+  }
+
+  bool _isFullImageEditEndpoint(String baseUrl) {
+    return _pathEndsWithAny(baseUrl, ['/images/edits']);
+  }
+
+  Uri _endpoint(String baseUrl, String path) {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    if (path == '/chat/completions' && _isFullChatEndpoint(normalized)) {
+      return Uri.parse(normalized);
+    }
+    if (path == '/images/generations' && (_isFullChatEndpoint(normalized) || _isFullImageGenerationEndpoint(normalized))) {
+      return Uri.parse(normalized);
+    }
+    if (path == '/images/edits' && (_isFullChatEndpoint(normalized) || _isFullImageEditEndpoint(normalized))) {
+      return Uri.parse(normalized);
+    }
+    return Uri.parse('$normalized$path');
+  }
+
+  bool _shouldUseChatStyleImageEndpoint(String baseUrl) => _isFullChatEndpoint(baseUrl);
 
   String normalizeChatModel(String model) {
     final value = model.trim();
@@ -397,6 +428,19 @@ JSON 格式：
     String model, {
     String size = '1024x1024',
   }) async {
+    if (_shouldUseChatStyleImageEndpoint(baseUrl)) {
+      return _callChatStyleImageTool(
+        prompt: prompt,
+        base64Image: null,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        model: model,
+        size: size,
+        category: 'text_to_image',
+        title: '文生图',
+      );
+    }
+
     final url = _endpoint(baseUrl, '/images/generations');
     final imageModel = normalizeImageModel(model);
 
@@ -446,6 +490,20 @@ JSON 格式：
     String model, {
     String size = '1024x1024',
   }) async {
+    if (_shouldUseChatStyleImageEndpoint(baseUrl)) {
+      final base64Image = base64Encode(await imageFile.readAsBytes());
+      return _callChatStyleImageTool(
+        prompt: prompt,
+        base64Image: base64Image,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        model: model,
+        size: size,
+        category: 'image_to_image',
+        title: '图生图 / 图片编辑',
+      );
+    }
+
     final url = _endpoint(baseUrl, '/images/edits');
     final editModel = normalizeImageEditModel(model);
     final bytes = await imageFile.length();
@@ -485,6 +543,133 @@ JSON 格式：
     final result = _extractImageResult(bodyText, endpoint: url.toString(), model: editModel, category: 'image_to_image');
     _log.success('image_to_image', '图生图工具调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {'endpoint': url.toString(), 'model': editModel});
     return result;
+  }
+
+  Future<String> _callChatStyleImageTool({
+    required String prompt,
+    required String? base64Image,
+    required String apiKey,
+    required String baseUrl,
+    required String model,
+    required String size,
+    required String category,
+    required String title,
+  }) async {
+    final url = _endpoint(baseUrl, '/chat/completions');
+    final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();
+    final hasImage = base64Image != null && base64Image.isNotEmpty;
+    final instruction = hasImage
+        ? '$prompt\n\n请根据上传图片进行生成/编辑，返回图片 URL 或 base64 图片数据。尺寸：$size。'
+        : '$prompt\n\n请生成图片，返回图片 URL 或 base64 图片数据。尺寸：$size。';
+
+    _log.info(category, '开始$title自定义 /chat 接口调用', 'POST ${url.path}', details: {
+      'endpoint': url.toString(),
+      'model': actualModel,
+      'prompt': prompt,
+      'size': size,
+      'hasImage': hasImage,
+    });
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ${apiKey.trim()}',
+      },
+      body: jsonEncode({
+        'model': actualModel,
+        'messages': [
+          {
+            'role': 'system',
+            'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。',
+          },
+          _imageContentMessage('user', instruction, base64Image),
+        ],
+        'stream': false,
+      }),
+    );
+
+    final bodyText = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _log.error(category, '$title自定义 /chat 接口调用失败', 'HTTP ${response.statusCode}', details: {
+        'endpoint': url.toString(),
+        'model': actualModel,
+        'statusCode': response.statusCode,
+        'response': bodyText,
+      });
+      throw Exception(_friendlyImageError(bodyText, model, actualModel, title));
+    }
+
+    final result = _extractImageResultFlexible(bodyText, endpoint: url.toString(), model: actualModel, category: category);
+    _log.success(category, '$title自定义 /chat 接口调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {
+      'endpoint': url.toString(),
+      'model': actualModel,
+    });
+    return result;
+  }
+
+  String _extractImageResultFlexible(
+    String bodyText, {
+    required String endpoint,
+    required String model,
+    required String category,
+  }) {
+    final data = _decodeJsonObjectOrThrow(
+      bodyText,
+      category: category,
+      title: '图片接口响应解析失败',
+      endpoint: endpoint,
+      model: model,
+    );
+
+    final fromData = _tryExtractOpenAiImageData(data);
+    if (fromData != null) return fromData;
+
+    final content = data['choices']?[0]?['message']?['content']?.toString() ?? data['choices']?[0]?['text']?.toString() ?? '';
+    final fromContent = _tryExtractImageFromText(content);
+    if (fromContent != null) return fromContent;
+
+    final directUrl = data['url']?.toString();
+    if (directUrl != null && directUrl.isNotEmpty) return directUrl;
+    final directB64 = data['b64_json']?.toString() ?? data['base64']?.toString() ?? data['image']?.toString();
+    if (directB64 != null && directB64.isNotEmpty) {
+      if (directB64.startsWith('data:image')) return directB64;
+      return 'data:image/png;base64,$directB64';
+    }
+
+    throw Exception('图片接口未返回图片 URL 或 base64。Endpoint: $endpoint。响应预览：${_shortBody(bodyText)}');
+  }
+
+  String? _tryExtractImageFromText(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return null;
+    final dataMatch = RegExp(r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+').firstMatch(trimmed);
+    if (dataMatch != null) return dataMatch.group(0)!.replaceAll(RegExp(r'\s+'), '');
+
+    final markdownImage = RegExp(r'!\[[^\]]*\]\((https?://[^\s)]+)\)').firstMatch(trimmed);
+    if (markdownImage != null) return markdownImage.group(1)!;
+
+    final markdownLink = RegExp(r'\[[^\]]*\]\((https?://[^\s)]+)\)').firstMatch(trimmed);
+    if (markdownLink != null) return markdownLink.group(1)!;
+
+    final urlMatch = RegExp(r'''https?://[^\s"'<>）)]+''').firstMatch(trimmed);
+    if (urlMatch != null) return urlMatch.group(0)!;
+    return null;
+  }
+
+  String? _tryExtractOpenAiImageData(Map<String, dynamic> data) {
+    final first = data['data']?[0];
+    final imageUrl = first?['url'];
+    if (imageUrl != null && imageUrl.toString().isNotEmpty) {
+      return imageUrl.toString();
+    }
+
+    final b64 = first?['b64_json'];
+    if (b64 != null && b64.toString().isNotEmpty) {
+      return 'data:image/png;base64,${b64.toString()}';
+    }
+    return null;
   }
 
   String _extractImageResult(
