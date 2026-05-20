@@ -176,7 +176,12 @@ class ApiService {
         final message = error['message']?.toString();
         final code = error['code']?.toString();
         if (message != null && message.isNotEmpty) {
-          return code == null || code.isEmpty ? message : '$message ($code)';
+          final baseMessage = code == null || code.isEmpty ? message : '$message ($code)';
+          final lower = baseMessage.toLowerCase();
+          if (lower.contains('auth_not_found') || lower.contains('no auth available')) {
+            return '$baseMessage。提示：服务端没有该 provider/model 的可用授权，或模型被中转站路由到了未配置的渠道。请检查聊天模型、文生图模型、图生图模型三个字段，以及 New API 后台对应渠道是否有可用密钥。';
+          }
+          return baseMessage;
         }
       }
     } catch (_) {}
