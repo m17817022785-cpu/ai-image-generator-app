@@ -1,37 +1,40 @@
 # Luna AI Flutter Client
 
-一个基于 Flutter 开发的专业 AI 助手客户端，支持流式聊天、视觉分析、AI 图像生成和现代化深色 UI。
+一个基于 Flutter 开发的专业 AI 助手客户端，支持 OpenAI 通用兼容格式的流式聊天、视觉分析、AI 图像生成和现代化深色 UI。
 
 ## ✨ 特性
 
+- **OpenAI 通用兼容格式**：聊天固定使用 `/chat/completions`，画图固定使用 `/images/generations`。
 - **统一输入入口**：聊天、生图、看图分析合并在同一个输入框中。
 - **令牌分离配置**：聊天和生图可以使用不同 API Key。
 - **接口分离配置**：聊天接口和生图接口可以使用不同 Base URL。
-- **流式对话**：支持 GPT 级别的打字机实时响应效果。
-- **AI 生图**：输入“画一张…”、“生成图片…”或点击画笔按钮即可生成图像。
-- **视觉分析**：支持上传图片进行多模态视觉分析。
-- **相册保存**：生成的 AI 图像可一键保存至系统相册。
+- **模型保护**：自动阻止 `gpt-40`、`gpt-4o`、`gpt-4o-mini` 等聊天模型被误用于画图接口。
+- **流式对话**：支持 OpenAI SSE 流式响应，同时兼容部分服务商的非流式 JSON 返回。
+- **AI 生图**：兼容图片接口返回 `url` 或 `b64_json`。
+- **视觉分析**：支持 OpenAI 多模态消息格式上传图片分析。
+- **相册保存**：生成的网络图片可一键保存至系统相册。
 - **现代 UI**：深色渐变背景、玻璃态面板、快捷功能卡片、悬浮输入栏和新版消息气泡。
-- **网页版预览**：`web_preview/` 内提供纯静态网页，用于快速查看 UI 效果。
 
 ## 🆕 当前版本
 
 ```text
-1.1.3+5
+1.1.4+6
 ```
 
 本版本重点修复：
 
-- 新增“生图 API Key”设置项。
-- 支持聊天模型和生图模型使用不同令牌。
-- “生图 API Key”留空时自动沿用“聊天 API Key”，兼容旧配置。
-- 保留“生图 Base URL”设置项，支持聊天接口和生图接口分别配置不同服务商地址。
-- “生图 Base URL”留空时自动沿用“聊天 Base URL”。
-- 保留生图模型保护：误填聊天模型时自动回退到 `dall-e-3` 并给出友好提示。
+- 将聊天和画图请求统一整理为 OpenAI 通用兼容格式。
+- 聊天请求：`POST {聊天 Base URL}/chat/completions`。
+- 画图请求：`POST {生图 Base URL}/images/generations`。
+- Base URL 自动去除末尾 `/`，避免拼接成 `//chat/completions`。
+- 聊天模型自动清洗：如果误填 `gpt-40`，会自动改用 `gpt-4o`。
+- 生图模型自动清洗：如果误填 `gpt-40`、`gpt-4o`、`gpt-4o-mini` 等聊天模型，会自动改用 `dall-e-3`。
+- 生图接口兼容 OpenAI 常见返回：`data[0].url` 和 `data[0].b64_json`。
+- 保留“聊天 API Key / 生图 API Key”和“聊天 Base URL / 生图 Base URL”分离配置。
 
-## ⚙️ 接口配置说明
+## ⚙️ 推荐配置
 
-设置页现在包含：
+设置页包含：
 
 ```text
 聊天 API Key
@@ -42,37 +45,42 @@
 生图模型
 ```
 
-如果聊天和生图来自同一个 OpenAI 兼容服务：
+### 聊天和生图来自同一个 OpenAI 兼容服务
 
 ```text
 聊天 API Key = sk-xxxx
 生图 API Key = 留空
-聊天 Base URL = https://xxx/v1
+聊天 Base URL = https://xxx.example.com/v1
 生图 Base URL = 留空
+聊天模型 = gpt-4o-mini / gpt-4o / 服务商支持的聊天模型
+生图模型 = dall-e-3 / dall-e-2 / gpt-image-1 / 服务商支持的图片模型
 ```
 
-如果聊天和生图来自不同服务商：
+### 聊天和生图来自不同服务商
 
 ```text
 聊天 API Key = sk-llm-xxxx
 生图 API Key = sk-image-xxxx
 聊天 Base URL = https://llm.example.com/v1
 生图 Base URL = https://image.example.com/v1
+聊天模型 = gpt-4o-mini
+生图模型 = dall-e-3
 ```
 
-聊天请求会调用：
+## ⚠️ 重要说明
+
+你遇到的错误：
 
 ```text
-聊天 Base URL + /chat/completions
+model not found: No available channel for model gpt-40
 ```
 
-生图请求会调用：
+说明 `gpt-40` 被服务商当成了请求模型。`gpt-40` 通常是把字母 `o` 误写成数字 `0`。新版中：
 
-```text
-生图 Base URL + /images/generations
-```
+- 聊天模型填 `gpt-40` 会自动修正为 `gpt-4o`。
+- 生图模型填 `gpt-40` / `gpt-4o` / `gpt-4o-mini` 会自动回退为 `dall-e-3`。
 
-生图模型请填写图片模型，例如：
+OpenAI 通用画图接口 `/images/generations` 应填写图片模型，例如：
 
 ```text
 dall-e-3
@@ -80,7 +88,7 @@ dall-e-2
 gpt-image-1
 ```
 
-不要把“生图模型”填写为聊天模型，例如：
+不要把“生图模型”填写为：
 
 ```text
 gpt-40
@@ -88,12 +96,12 @@ gpt-4o
 gpt-4o-mini
 ```
 
-这些聊天模型通常不能用于 `/images/generations` 生图接口。
+如果服务商不支持 `dall-e-3`，请把“生图模型”改为服务商明确支持的图片模型，并确保“生图 Base URL”指向支持 `/images/generations` 的服务。
 
 ## 🚀 快速开始
 
 1. 确保已安装 Flutter 环境。
-2. 在设置界面配置您的 API Key、Base URL 和模型。
+2. 在设置界面配置 API Key、Base URL 和模型。
 3. 运行项目：
 
 ```bash
