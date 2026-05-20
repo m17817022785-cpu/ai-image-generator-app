@@ -82,6 +82,61 @@ class ApiService {
     return value;
   }
 
+  bool _looksLikeHtml(String body) {
+    final value = body.trimLeft().toLowerCase();
+    return value.startsWith('<!doctype html') || value.startsWith('<html') || value.startsWith('<');
+  }
+
+  String _shortBody(String body, {int maxLength = 800}) {
+    final trimmed = body.trim();
+    if (trimmed.length <= maxLength) return trimmed;
+    return '${trimmed.substring(0, maxLength)}... <truncated, length=${trimmed.length}>';
+  }
+
+  Map<String, dynamic> _decodeJsonObjectOrThrow(
+    String body, {
+    required String category,
+    required String title,
+    required String endpoint,
+    required String model,
+    int? statusCode,
+  }) {
+    if (_looksLikeHtml(body)) {
+      _log.error(category, title, '接口返回了 HTML，不是 JSON', details: {
+        'endpoint': endpoint,
+        'model': model,
+        'statusCode': statusCode,
+        'responsePreview': _shortBody(body),
+      });
+      throw Exception('接口返回了 HTML 页面，不是 OpenAI 兼容 JSON。请检查 Base URL 是否填到了网页地址、控制台/中转站首页，或该服务商路径是否正确。Endpoint: $endpoint');
+    }
+
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map<String, dynamic>) return parsed;
+      if (parsed is Map) return Map<String, dynamic>.from(parsed);
+      _log.error(category, title, '接口返回 JSON 但不是对象', details: {
+        'endpoint': endpoint,
+        'model': model,
+        'statusCode': statusCode,
+        'responsePreview': _shortBody(body),
+      });
+      throw Exception('接口返回 JSON 但不是对象，请查看控制台原始响应。Endpoint: $endpoint');
+    } catch (e) {
+      if (e is FormatException) {
+        _log.error(category, title, 'JSON 解析失败', details: {
+          'endpoint': endpoint,
+          'model': model,
+          'statusCode': statusCode,
+          'responsePreview': _shortBody(body),
+          'error': e.toString(),
+        });
+        throw Exception('接口返回内容不是合法 JSON，请检查 Base URL、模型供应商兼容性或反代配置。Endpoint: $endpoint。详情见控制台。');
+      }
+      rethrow;
+    }
+  }
+
   String _extractOpenAiError(String body) {
     try {
       final parsed = jsonDecode(body);
@@ -94,6 +149,9 @@ class ApiService {
         }
       }
     } catch (_) {}
+    if (_looksLikeHtml(body)) {
+      return '接口返回 HTML 页面，不是 JSON。请检查 Base URL 是否正确。响应预览：${_shortBody(body, maxLength: 300)}';
+    }
     return body;
   }
 
@@ -193,7 +251,14 @@ JSON 格式：
       throw Exception('工具决策失败 ${response.statusCode}: ${_extractOpenAiError(bodyText)}');
     }
 
-    final parsed = jsonDecode(bodyText);
+    final parsed = _decodeJsonObjectOrThrow(
+      bodyText,
+      category: 'tool_decision',
+      title: 'LLM 工具决策响应解析失败',
+      endpoint: url.toString(),
+      model: actualModel,
+      statusCode: response.statusCode,
+    );
     final rawContent = parsed['choices']?[0]?['message']?['content']?.toString() ?? '';
     final decision = _parseDecision(rawContent, userText: userText, hasImage: hasImage);
     _log.success('tool_decision', 'LLM 工具决策完成', decision.action.name, details: {
@@ -368,7 +433,7 @@ JSON 格式：
       throw Exception(_friendlyImageError(bodyText, model, imageModel, '文生图'));
     }
 
-    final result = _extractImageResult(bodyText);
+    final result = _extractImageResult(bodyText, endpoint: url.toString(), model: imageModel, category: 'text_to_image');
     _log.success('text_to_image', '文生图工具调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {'endpoint': url.toString(), 'model': imageModel});
     return result;
   }
@@ -417,13 +482,24 @@ JSON 格式：
       throw Exception(_friendlyImageError(bodyText, model, editModel, '图生图 / 图片编辑'));
     }
 
-    final result = _extractImageResult(bodyText);
+    final result = _extractImageResult(bodyText, endpoint: url.toString(), model: editModel, category: 'image_to_image');
     _log.success('image_to_image', '图生图工具调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {'endpoint': url.toString(), 'model': editModel});
     return result;
   }
 
-  String _extractImageResult(String bodyText) {
-    final data = jsonDecode(bodyText);
+  String _extractImageResult(
+    String bodyText, {
+    required String endpoint,
+    required String model,
+    required String category,
+  }) {
+    final data = _decodeJsonObjectOrThrow(
+      bodyText,
+      category: category,
+      title: '图片接口响应解析失败',
+      endpoint: endpoint,
+      model: model,
+    );
     final first = data['data']?[0];
     final imageUrl = first?['url'];
     if (imageUrl != null && imageUrl.toString().isNotEmpty) {
