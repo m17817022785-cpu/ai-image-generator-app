@@ -54,7 +54,13 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          BUILD_NAME=${APP_VERSION%%+*}
+          BUILD_NUMBER=${APP_VERSION##*+}
+          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER"
+          flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
