@@ -124,11 +124,23 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _scrollBottom();
 
+    final normalizedChatModel = _apiService.normalizeChatModel(_chatModel);
+    final normalizedImageModel = _effectiveImageModel;
+    final normalizedImageEditModel = _effectiveImageEditModel;
+
     _log.info('user_input', '用户发送消息', _forceImage ? '强制图片工具模式' : '自动决策模式', details: {
       'text': content,
       'hasImage': attachedFile != null,
       'forceImageTool': _forceImage,
       'imagePath': attachedFile?.path,
+      'chatBaseUrl': _baseUrl,
+      'imageBaseUrl': _effectiveImageBaseUrl,
+      'rawChatModel': _chatModel,
+      'actualChatModel': normalizedChatModel,
+      'rawImageModel': _imageModel,
+      'actualImageModel': normalizedImageModel,
+      'rawImageEditModel': _imageEditModel,
+      'actualImageEditModel': normalizedImageEditModel,
     });
 
     try {
