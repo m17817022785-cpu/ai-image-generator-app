@@ -40,11 +40,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _attachedBase64;
 
   String _apiKey = '';
+  String _imageApiKey = '';
   String _baseUrl = 'https://api.openai.com/v1';
   String _imageBaseUrl = '';
   String _chatModel = 'gpt-4o-mini';
   String _imageModel = 'dall-e-3';
 
+  String get _effectiveImageApiKey => _imageApiKey.trim().isEmpty ? _apiKey : _imageApiKey.trim();
   String get _effectiveImageBaseUrl => _imageBaseUrl.trim().isEmpty ? _baseUrl : _imageBaseUrl.trim();
 
   @override
@@ -66,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _apiKey = settings['apiKey'] ?? '';
+        _imageApiKey = settings['imageApiKey'] ?? '';
         _baseUrl = settings['baseUrl'] ?? 'https://api.openai.com/v1';
         _imageBaseUrl = settings['imageBaseUrl'] ?? '';
         _chatModel = settings['chatModel'] ?? 'gpt-4o-mini';
@@ -155,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _messages.add(placeholder));
     _scrollBottom();
 
-    final url = await _apiService.generateImage(prompt, _apiKey, _effectiveImageBaseUrl, _imageModel);
+    final url = await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _imageModel);
     if (!mounted) return;
     setState(() {
       final index = _messages.indexWhere((m) => m.id == placeholder.id);
@@ -613,6 +616,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       await _showSettingsDialog(
         apiKey: settings['apiKey'] ?? _apiKey,
+        imageApiKey: settings['imageApiKey'] ?? _imageApiKey,
         baseUrl: settings['baseUrl'] ?? _baseUrl,
         imageBaseUrl: settings['imageBaseUrl'] ?? _imageBaseUrl,
         chatModel: settings['chatModel'] ?? _chatModel,
@@ -620,18 +624,20 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (_) {
       if (!mounted) return;
-      await _showSettingsDialog(apiKey: _apiKey, baseUrl: _baseUrl, imageBaseUrl: _imageBaseUrl, chatModel: _chatModel, imageModel: _imageModel);
+      await _showSettingsDialog(apiKey: _apiKey, imageApiKey: _imageApiKey, baseUrl: _baseUrl, imageBaseUrl: _imageBaseUrl, chatModel: _chatModel, imageModel: _imageModel);
     }
   }
 
   Future<void> _showSettingsDialog({
     required String apiKey,
+    required String imageApiKey,
     required String baseUrl,
     required String imageBaseUrl,
     required String chatModel,
     required String imageModel,
   }) async {
     final keyCtrl = TextEditingController(text: apiKey);
+    final imageKeyCtrl = TextEditingController(text: imageApiKey);
     final urlCtrl = TextEditingController(text: baseUrl);
     final imageUrlCtrl = TextEditingController(text: imageBaseUrl);
     final chatCtrl = TextEditingController(text: chatModel);
@@ -646,7 +652,8 @@ class _HomeScreenState extends State<HomeScreen> {
           title: const Row(children: [Icon(Icons.settings_rounded, color: _secondary), SizedBox(width: 10), Text('API 配置参数', style: TextStyle(color: _text, fontWeight: FontWeight.w900))]),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _field(keyCtrl, 'API Key', 'sk-xxxx'),
+              _field(keyCtrl, '聊天 API Key', 'sk-xxxx'),
+              _field(imageKeyCtrl, '生图 API Key（可留空沿用聊天令牌）', 'sk-image-xxxx'),
               _field(urlCtrl, '聊天 Base URL', 'https://api.openai.com/v1'),
               _field(imageUrlCtrl, '生图 Base URL（可留空沿用聊天接口）', 'https://api.openai.com/v1'),
               _field(chatCtrl, '聊天模型', 'gpt-4o-mini'),
@@ -658,12 +665,14 @@ class _HomeScreenState extends State<HomeScreen> {
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: _primary),
               onPressed: () async {
+                final newImageKey = imageKeyCtrl.text.trim();
                 final newBase = urlCtrl.text.trim().isEmpty ? 'https://api.openai.com/v1' : urlCtrl.text.trim();
                 final newImageBase = imageUrlCtrl.text.trim();
                 final newChat = chatCtrl.text.trim().isEmpty ? 'gpt-4o-mini' : chatCtrl.text.trim();
                 final newImage = imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim();
                 await _settingsService.saveSettings(
                   apiKey: keyCtrl.text.trim(),
+                  imageApiKey: newImageKey,
                   baseUrl: newBase,
                   imageBaseUrl: newImageBase,
                   chatModel: newChat,
@@ -672,13 +681,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (!mounted) return;
                 setState(() {
                   _apiKey = keyCtrl.text.trim();
+                  _imageApiKey = newImageKey;
                   _baseUrl = newBase;
                   _imageBaseUrl = newImageBase;
                   _chatModel = newChat;
                   _imageModel = newImage;
                 });
                 Navigator.pop(dialogContext);
-                _snack(newImageBase.isEmpty ? '设置已保存，生图接口沿用聊天接口' : '设置已保存，聊天/生图接口已分开');
+                final imageKeyTip = newImageKey.isEmpty ? '生图令牌沿用聊天令牌' : '聊天/生图令牌已分开';
+                final imageUrlTip = newImageBase.isEmpty ? '生图接口沿用聊天接口' : '聊天/生图接口已分开';
+                _snack('设置已保存，$imageKeyTip，$imageUrlTip');
               },
               child: const Text('保存修改', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
             ),
@@ -687,6 +699,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } finally {
       keyCtrl.dispose();
+      imageKeyCtrl.dispose();
       urlCtrl.dispose();
       imageUrlCtrl.dispose();
       chatCtrl.dispose();
