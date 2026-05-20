@@ -11,6 +11,18 @@ buildscript {
     }
 }
 
+// Compatibility shim for older Flutter plugins that still read
+// rootProject.ext.flutter.compileSdkVersion/minSdkVersion/targetSdkVersion.
+// The Flutter Gradle plugin exposes these values to the app module, but some
+// third-party plugin Gradle scripts (for example gal 2.x) evaluate before that
+// extension is available on their own project.
+ext.flutter = [
+    compileSdkVersion: 34,
+    minSdkVersion    : 21,
+    targetSdkVersion : 34,
+    ndkVersion       : '25.1.8937393'
+]
+
 allprojects {
     repositories {
         google()
