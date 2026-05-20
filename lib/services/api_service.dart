@@ -1,10 +1,32 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../models/message.dart';
+import 'debug_log_service.dart';
+
+enum ToolAction { directAnswer, textToImage, imageToImage }
+
+class ToolDecision {
+  final ToolAction action;
+  final String prompt;
+  final String reply;
+  final String size;
+
+  const ToolDecision({
+    required this.action,
+    required this.prompt,
+    required this.reply,
+    required this.size,
+  });
+
+  bool get shouldCallImageTool => action == ToolAction.textToImage || action == ToolAction.imageToImage;
+}
 
 class ApiService {
+  final DebugLogService _log = DebugLogService.instance;
+
   String _normalizeBaseUrl(String baseUrl) {
     var value = baseUrl.trim();
     if (value.isEmpty) value = 'https://api.openai.com/v1';
@@ -21,12 +43,11 @@ class ApiService {
   String normalizeChatModel(String model) {
     final value = model.trim();
     if (value.isEmpty) return 'gpt-4o-mini';
-    // 常见误填：gpt-40 是数字 0，不是字母 o；OpenAI 通常是 gpt-4o。
     if (value.toLowerCase() == 'gpt-40') return 'gpt-4o';
     return value;
   }
 
-  /// OpenAI 通用 /images/generations 需要图片模型，不能使用聊天模型。
+  /// 文生图模型：OpenAI 通用 /images/generations 通常不能使用聊天模型。
   String normalizeImageModel(String model) {
     final value = model.trim();
     if (value.isEmpty) return 'dall-e-3';
@@ -50,6 +71,17 @@ class ApiService {
     return value;
   }
 
+  /// 图生图/图片编辑模型：默认使用 gpt-image-1，允许服务商自定义图片模型。
+  String normalizeImageEditModel(String model) {
+    final value = model.trim();
+    if (value.isEmpty) return 'gpt-image-1';
+    final lower = value.toLowerCase();
+    if (lower == 'gpt-40' || lower == 'gpt-4o' || lower == 'gpt-4o-mini') {
+      return 'gpt-image-1';
+    }
+    return value;
+  }
+
   String _extractOpenAiError(String body) {
     try {
       final parsed = jsonDecode(body);
@@ -65,23 +97,150 @@ class ApiService {
     return body;
   }
 
-  String _friendlyImageError(String rawError, String requestedModel, String actualModel) {
+  String _friendlyImageError(String rawError, String requestedModel, String actualModel, String endpointName) {
     final shortError = _extractOpenAiError(rawError);
     final lower = shortError.toLowerCase();
     if (lower.contains('model not found') || lower.contains('no available channel')) {
-      return '生图模型不可用。当前实际请求的生图模型是：$actualModel。'
-          'gpt-40 / gpt-4o / gpt-4o-mini 是聊天模型，不能用于 OpenAI 通用 /images/generations 生图接口。'
-          '请把“生图模型”填写为 dall-e-3、dall-e-2、gpt-image-1，或服务商支持的图片模型。'
-          '原始错误：$shortError';
+      return '$endpointName 模型不可用。当前实际请求模型是：$actualModel。请在图片工具配置中填写服务商支持的图片模型。原始错误：$shortError';
+    }
+    if (lower.contains('not found') || lower.contains('404') || lower.contains('no route')) {
+      return '$endpointName 接口不可用。请确认图片 Base URL 是否支持对应接口。原始错误：$shortError';
     }
     if (requestedModel.trim() != actualModel) {
-      return '检测到生图模型配置不适合画图，已从“$requestedModel”自动改用“$actualModel”，但接口仍返回错误：$shortError';
+      return '检测到模型配置不适合图片工具，已从“$requestedModel”自动改用“$actualModel”，但接口仍返回错误：$shortError';
     }
     return shortError;
   }
 
-  /// OpenAI 通用聊天接口：POST /chat/completions
-  /// 请求体格式：{ model, messages, stream }
+  Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image) {
+    if (base64Image != null && base64Image.isNotEmpty) {
+      return {
+        'role': role,
+        'content': [
+          {'type': 'text', 'text': text},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,$base64Image'}
+          }
+        ]
+      };
+    }
+    return {'role': role, 'content': text};
+  }
+
+  Future<ToolDecision> decideTool({
+    required String userText,
+    required String? base64Image,
+    required String apiKey,
+    required String baseUrl,
+    required String model,
+  }) async {
+    final url = _endpoint(baseUrl, '/chat/completions');
+    final actualModel = normalizeChatModel(model);
+    final hasImage = base64Image != null && base64Image.isNotEmpty;
+    const systemPrompt = '''你是 Luna AI 的工具决策器。你需要根据用户文本和可选图片决定下一步动作。
+只能输出 JSON，不要输出 Markdown，不要输出解释文字。
+
+动作 action 只能是：
+1. direct_answer：普通聊天、解释、问答、图片理解、图片分析、写文案、总结，不需要生成新图片。
+2. text_to_image：用户想从文字创建一张新图片，且不依赖上传图片。
+3. image_to_image：用户上传了图片，并要求修改、重绘、换风格、换背景、修复、变清晰、参考原图生成、扩图、局部编辑等，输出新图片。
+
+JSON 格式：
+{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图片工具使用的英文或中文优化提示词，没有则为空","reply":"给用户看的简短回复。direct_answer 时这里就是回答内容","size":"1024x1024"}
+
+规则：
+- 如果用户只是问图片里有什么、让你分析图片、评价图片、写标题或文案，必须 direct_answer。
+- 如果用户要求“把这张图改成...”“换背景”“去掉/添加元素”“转风格”“高清修复”“参考这张图生成”，且有上传图片，必须 image_to_image。
+- 如果用户要求“画一张”“生成图片”“设计海报/logo/壁纸”等且没有上传图片，使用 text_to_image。
+- 如果没有上传图片，不要使用 image_to_image。
+- size 默认 1024x1024。''';
+
+    _log.info('tool_decision', '开始 LLM 工具决策', 'POST /chat/completions', details: {
+      'endpoint': url.toString(),
+      'model': actualModel,
+      'hasImage': hasImage,
+      'userText': userText,
+    });
+
+    final body = {
+      'model': actualModel,
+      'messages': [
+        {'role': 'system', 'content': systemPrompt},
+        _imageContentMessage('user', userText.isEmpty ? '请根据上传图片继续处理' : userText, base64Image),
+      ],
+      'stream': false,
+    };
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ${apiKey.trim()}',
+      },
+      body: jsonEncode(body),
+    );
+    final bodyText = utf8.decode(response.bodyBytes);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _log.error('tool_decision', 'LLM 工具决策失败', 'HTTP ${response.statusCode}', details: {
+        'endpoint': url.toString(),
+        'model': actualModel,
+        'statusCode': response.statusCode,
+        'response': bodyText,
+      });
+      throw Exception('工具决策失败 ${response.statusCode}: ${_extractOpenAiError(bodyText)}');
+    }
+
+    final parsed = jsonDecode(bodyText);
+    final rawContent = parsed['choices']?[0]?['message']?['content']?.toString() ?? '';
+    final decision = _parseDecision(rawContent, userText: userText, hasImage: hasImage);
+    _log.success('tool_decision', 'LLM 工具决策完成', decision.action.name, details: {
+      'rawContent': rawContent,
+      'action': decision.action.name,
+      'prompt': decision.prompt,
+      'reply': decision.reply,
+      'size': decision.size,
+    });
+    return decision;
+  }
+
+  ToolDecision _parseDecision(String raw, {required String userText, required bool hasImage}) {
+    String cleaned = raw.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replaceAll(RegExp(r'^```json\s*', multiLine: true), '').replaceAll(RegExp(r'^```\s*', multiLine: true), '').replaceAll(RegExp(r'```\s*$', multiLine: true), '').trim();
+    }
+    try {
+      final data = jsonDecode(cleaned);
+      final actionText = data['action']?.toString() ?? 'direct_answer';
+      final action = switch (actionText) {
+        'text_to_image' => ToolAction.textToImage,
+        'image_to_image' => hasImage ? ToolAction.imageToImage : ToolAction.textToImage,
+        _ => ToolAction.directAnswer,
+      };
+      final prompt = data['prompt']?.toString().trim() ?? userText.trim();
+      final reply = data['reply']?.toString().trim() ?? '';
+      final size = data['size']?.toString().trim().isNotEmpty == true ? data['size'].toString().trim() : '1024x1024';
+      return ToolDecision(action: action, prompt: prompt.isEmpty ? userText : prompt, reply: reply, size: size);
+    } catch (e) {
+      _log.warning('tool_decision', 'LLM 决策 JSON 解析失败', '使用兜底逻辑', details: {'rawContent': raw, 'error': e.toString()});
+      if (!hasImage && _looksLikeImagePrompt(userText)) {
+        return ToolDecision(action: ToolAction.textToImage, prompt: userText, reply: '我会为你生成图片。', size: '1024x1024');
+      }
+      return ToolDecision(action: ToolAction.directAnswer, prompt: '', reply: raw.trim().isEmpty ? '我暂时无法判断你的意图，请换个说法。' : raw.trim(), size: '1024x1024');
+    }
+  }
+
+  bool _looksLikeImagePrompt(String text) {
+    final value = text.trim().toLowerCase();
+    const prefixes = ['/image', '/img', '/draw', '画图', '绘图', '生图', '生成图片', '生成一张', '帮我画', '画一张', '做一张图', '出一张图', 'create an image', 'generate an image', 'draw '];
+    if (prefixes.any(value.startsWith)) return true;
+    const imageWords = ['图片', '图像', '插画', '海报', '头像', '壁纸', 'logo', 'poster', 'illustration', 'wallpaper'];
+    const actionWords = ['生成', '画', '绘制', '设计', 'create', 'generate', 'draw', 'design'];
+    return imageWords.any(value.contains) && actionWords.any(value.contains);
+  }
+
   Stream<String> generateChatStream(
     List<Message> history,
     String apiKey,
@@ -89,14 +248,24 @@ class ApiService {
     String model,
   ) async* {
     final url = _endpoint(baseUrl, '/chat/completions');
+    final actualModel = normalizeChatModel(model);
     final formattedMessages = history.map((msg) => msg.toOpenAiMap()).toList();
+    final hasImage = history.any((m) => m.base64Image != null && m.base64Image!.isNotEmpty);
+
+    _log.info('chat', '开始聊天请求', 'POST /chat/completions', details: {
+      'endpoint': url.toString(),
+      'model': actualModel,
+      'messageCount': history.length,
+      'hasImage': hasImage,
+      'stream': true,
+    });
 
     final request = http.Request('POST', url)
       ..headers['Content-Type'] = 'application/json'
       ..headers['Accept'] = 'text/event-stream, application/json'
       ..headers['Authorization'] = 'Bearer ${apiKey.trim()}'
       ..body = jsonEncode({
-        'model': normalizeChatModel(model),
+        'model': actualModel,
         'messages': formattedMessages,
         'stream': true,
       });
@@ -108,6 +277,12 @@ class ApiService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final errorBytes = await response.stream.toBytes();
         final errorMsg = utf8.decode(errorBytes);
+        _log.error('chat', '聊天请求失败', 'HTTP ${response.statusCode}', details: {
+          'endpoint': url.toString(),
+          'model': actualModel,
+          'statusCode': response.statusCode,
+          'response': errorMsg,
+        });
         throw Exception('API 错误码 ${response.statusCode}: ${_extractOpenAiError(errorMsg)}');
       }
 
@@ -128,15 +303,12 @@ class ApiService {
             if (deltaContent.toString().isNotEmpty) {
               yield deltaContent.toString();
             }
-          } catch (_) {
-            // 忽略无法解析的 SSE 行。
-          }
+          } catch (_) {}
         } else {
           jsonBuffer.writeln(trimmed);
         }
       }
 
-      // 兼容非流式 JSON 返回：{ choices: [{ message: { content } }] }
       final buffered = jsonBuffer.toString().trim();
       if (buffered.isNotEmpty) {
         try {
@@ -147,14 +319,12 @@ class ApiService {
           }
         } catch (_) {}
       }
+      _log.success('chat', '聊天请求完成', '流式响应已结束', details: {'endpoint': url.toString(), 'model': actualModel});
     } finally {
       client.close();
     }
   }
 
-  /// OpenAI 通用生图接口：POST /images/generations
-  /// 请求体格式：{ model, prompt, n, size }
-  /// 兼容返回：data[0].url 或 data[0].b64_json。
   Future<String> generateImage(
     String prompt,
     String apiKey,
@@ -164,6 +334,13 @@ class ApiService {
   }) async {
     final url = _endpoint(baseUrl, '/images/generations');
     final imageModel = normalizeImageModel(model);
+
+    _log.info('text_to_image', '开始文生图工具调用', 'POST /images/generations', details: {
+      'endpoint': url.toString(),
+      'model': imageModel,
+      'prompt': prompt,
+      'size': size,
+    });
 
     final response = await http.post(
       url,
@@ -182,9 +359,70 @@ class ApiService {
 
     final bodyText = utf8.decode(response.bodyBytes);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(_friendlyImageError(bodyText, model, imageModel));
+      _log.error('text_to_image', '文生图工具调用失败', 'HTTP ${response.statusCode}', details: {
+        'endpoint': url.toString(),
+        'model': imageModel,
+        'statusCode': response.statusCode,
+        'response': bodyText,
+      });
+      throw Exception(_friendlyImageError(bodyText, model, imageModel, '文生图'));
     }
 
+    final result = _extractImageResult(bodyText);
+    _log.success('text_to_image', '文生图工具调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {'endpoint': url.toString(), 'model': imageModel});
+    return result;
+  }
+
+  Future<String> editImage(
+    String prompt,
+    File imageFile,
+    String apiKey,
+    String baseUrl,
+    String model, {
+    String size = '1024x1024',
+  }) async {
+    final url = _endpoint(baseUrl, '/images/edits');
+    final editModel = normalizeImageEditModel(model);
+    final bytes = await imageFile.length();
+
+    _log.info('image_to_image', '开始图生图工具调用', 'POST /images/edits multipart/form-data', details: {
+      'endpoint': url.toString(),
+      'model': editModel,
+      'prompt': prompt,
+      'size': size,
+      'imagePath': imageFile.path,
+      'imageSizeBytes': bytes,
+    });
+
+    final request = http.MultipartRequest('POST', url)
+      ..headers['Accept'] = 'application/json'
+      ..headers['Authorization'] = 'Bearer ${apiKey.trim()}'
+      ..fields['model'] = editModel
+      ..fields['prompt'] = prompt
+      ..fields['n'] = '1'
+      ..fields['size'] = size
+      ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    final bodyText = utf8.decode(response.bodyBytes);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _log.error('image_to_image', '图生图工具调用失败', 'HTTP ${response.statusCode}', details: {
+        'endpoint': url.toString(),
+        'model': editModel,
+        'statusCode': response.statusCode,
+        'response': bodyText,
+      });
+      throw Exception(_friendlyImageError(bodyText, model, editModel, '图生图 / 图片编辑'));
+    }
+
+    final result = _extractImageResult(bodyText);
+    _log.success('image_to_image', '图生图工具调用成功', result.startsWith('data:image') ? '返回 base64 图片' : '返回图片 URL', details: {'endpoint': url.toString(), 'model': editModel});
+    return result;
+  }
+
+  String _extractImageResult(String bodyText) {
     final data = jsonDecode(bodyText);
     final first = data['data']?[0];
     final imageUrl = first?['url'];
@@ -197,6 +435,6 @@ class ApiService {
       return 'data:image/png;base64,${b64.toString()}';
     }
 
-    throw Exception('OpenAI 生图接口未返回 data[0].url 或 data[0].b64_json');
+    throw Exception('图片接口未返回 data[0].url 或 data[0].b64_json');
   }
 }
