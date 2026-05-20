@@ -22,6 +22,30 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
+// Also allow GitHub Actions / CI to provide signing values through environment variables.
+def envStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
+def envStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def envKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def envKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
+def releaseStoreFile = keystoreProperties['storeFile'] ?: envStoreFile
+def releaseStorePassword = keystoreProperties['storePassword'] ?: envStorePassword
+def releaseKeyAlias = keystoreProperties['keyAlias'] ?: envKeyAlias
+def releaseKeyPassword = keystoreProperties['keyPassword'] ?: envKeyPassword
+
+def hasReleaseSigning = releaseStoreFile != null &&
+        releaseStorePassword != null &&
+        releaseKeyAlias != null &&
+        releaseKeyPassword != null
+
 android {
     namespace "com.example.ai_image_generator"
     compileSdkVersion flutter.compileSdkVersion
@@ -44,9 +68,23 @@ android {
         versionName flutterVersionName
     }
 
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            // Prefer a real stable release key when provided. If not configured, fall back to
+            // debug signing. The GitHub workflow caches ~/.android/debug.keystore so that
+            // fallback signing remains stable across future CI builds.
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
 }
