@@ -5,10 +5,10 @@
 set -eu
 
 APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-GRADLE_VERSION="7.5"
+GRADLE_VERSION="7.6.3"
 GRADLE_DIST="gradle-${GRADLE_VERSION}-bin.zip"
 GRADLE_URL="https://services.gradle.org/distributions/${GRADLE_DIST}"
-GRADLE_CACHE_DIR="${HOME}/.gradle/lunalink-wrapper"
+GRADLE_CACHE_DIR="${HOME}/.gradle/wrapper-cache"
 GRADLE_HOME="${GRADLE_CACHE_DIR}/gradle-${GRADLE_VERSION}"
 GRADLE_BIN="${GRADLE_HOME}/bin/gradle"
 
@@ -17,20 +17,13 @@ if [ ! -x "${GRADLE_BIN}" ]; then
   TMP_ZIP="${GRADLE_CACHE_DIR}/${GRADLE_DIST}"
 
   if [ ! -f "${TMP_ZIP}" ]; then
-    echo "Downloading Gradle ${GRADLE_VERSION} from ${GRADLE_URL}"
-    if command -v curl >/dev/null 2>&1; then
-      curl -L --retry 3 --connect-timeout 30 -o "${TMP_ZIP}" "${GRADLE_URL}"
-    elif command -v wget >/dev/null 2>&1; then
-      wget -O "${TMP_ZIP}" "${GRADLE_URL}"
-    else
-      echo "Neither curl nor wget is available to download Gradle." >&2
-      exit 1
-    fi
+    echo "Downloading Gradle ${GRADLE_VERSION}..."
+    curl -L -o "${TMP_ZIP}" "${GRADLE_URL}"
   fi
 
-  echo "Installing Gradle ${GRADLE_VERSION}"
-  rm -rf "${GRADLE_HOME}"
+  echo "Installing Gradle..."
   unzip -q "${TMP_ZIP}" -d "${GRADLE_CACHE_DIR}"
+  chmod +x "${GRADLE_BIN}"
 fi
 
 cd "${APP_HOME}"
