@@ -7,8 +7,10 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/message.dart';
 import '../services/api_service.dart';
+import '../services/debug_log_service.dart';
 import '../services/image_save_service.dart';
 import '../services/settings_service.dart';
+import 'debug_console_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final _apiService = ApiService();
   final _settingsService = SettingsService();
+  final _log = DebugLogService.instance;
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final List<Message> _messages = [];
@@ -45,10 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
   String _imageBaseUrl = '';
   String _chatModel = 'gpt-4o-mini';
   String _imageModel = 'dall-e-3';
+  String _imageEditModel = 'gpt-image-1';
 
   String get _effectiveImageApiKey => _imageApiKey.trim().isEmpty ? _apiKey : _imageApiKey.trim();
   String get _effectiveImageBaseUrl => _imageBaseUrl.trim().isEmpty ? _baseUrl : _imageBaseUrl.trim();
   String get _effectiveImageModel => _apiService.normalizeImageModel(_imageModel);
+  String get _effectiveImageEditModel => _apiService.normalizeImageEditModel(_imageEditModel);
 
   @override
   void initState() {
@@ -74,54 +79,40 @@ class _HomeScreenState extends State<HomeScreen> {
         _imageBaseUrl = settings['imageBaseUrl'] ?? '';
         _chatModel = settings['chatModel'] ?? 'gpt-4o-mini';
         _imageModel = settings['imageModel'] ?? 'dall-e-3';
+        _imageEditModel = settings['imageEditModel'] ?? 'gpt-image-1';
+      });
+      _log.info('settings', '设置读取成功', '已加载 API 配置', details: {
+        'hasChatKey': _apiKey.isNotEmpty,
+        'hasImageKey': _imageApiKey.isNotEmpty,
+        'baseUrl': _baseUrl,
+        'imageBaseUrl': _imageBaseUrl,
+        'chatModel': _chatModel,
+        'imageModel': _imageModel,
+        'imageEditModel': _imageEditModel,
       });
     } catch (e) {
+      _log.error('settings', '读取设置失败', e.toString());
       _snack('读取设置失败: $e');
     }
   }
 
-  bool _isImagePrompt(String text) {
-    final value = text.trim().toLowerCase();
-    if (value.isEmpty) return false;
-    const prefixes = [
-      '/image', '/img', '/draw', '画图', '绘图', '生图', '生成图片', '生成一张', '帮我画', '画一张',
-      '做一张图', '出一张图', 'create an image', 'generate an image', 'draw '
-    ];
-    if (prefixes.any(value.startsWith)) return true;
-    const imageWords = ['图片', '图像', '插画', '海报', '头像', '壁纸', 'logo', 'poster', 'illustration', 'wallpaper'];
-    const actionWords = ['生成', '画', '绘制', '设计', 'create', 'generate', 'draw', 'design'];
-    return imageWords.any(value.contains) && actionWords.any(value.contains);
-  }
-
-  String _cleanImagePrompt(String text) {
-    var prompt = text.trim();
-    const prefixes = ['/image', '/img', '/draw', '画图', '绘图', '生图', '生成图片'];
-    for (final prefix in prefixes) {
-      if (prompt.toLowerCase().startsWith(prefix.toLowerCase())) {
-        prompt = prompt.substring(prefix.length).trimLeft();
-        if (prompt.startsWith(':') || prompt.startsWith('：')) prompt = prompt.substring(1).trimLeft();
-        break;
-      }
-    }
-    return prompt.isEmpty ? text.trim() : prompt;
-  }
-
   Future<void> _send() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty && _attachedFile == null) return;
+    final attachedFile = _attachedFile;
+    final attachedBase64 = _attachedBase64;
+    if (text.isEmpty && attachedFile == null) return;
     if (_apiKey.isEmpty) {
       _snack('请先在设置中配置 API Key');
       return;
     }
 
-    final shouldImage = _attachedFile == null && (_forceImage || _isImagePrompt(text));
-    final content = shouldImage ? _cleanImagePrompt(text) : (text.isEmpty ? '请分析这张图片' : text);
+    final content = text.isEmpty ? (attachedFile == null ? '' : '请根据这张图片继续处理') : text;
     final userMessage = Message(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       role: 'user',
       content: content,
-      localFilePath: _attachedFile?.path,
-      base64Image: _attachedBase64,
+      localFilePath: attachedFile?.path,
+      base64Image: attachedBase64,
     );
 
     setState(() {
@@ -129,37 +120,115 @@ class _HomeScreenState extends State<HomeScreen> {
       _inputController.clear();
       _attachedFile = null;
       _attachedBase64 = null;
-      _forceImage = false;
       _isLoading = true;
     });
     _scrollBottom();
 
+    _log.info('user_input', '用户发送消息', _forceImage ? '强制图片工具模式' : '自动决策模式', details: {
+      'text': content,
+      'hasImage': attachedFile != null,
+      'forceImageTool': _forceImage,
+      'imagePath': attachedFile?.path,
+    });
+
     try {
-      if (shouldImage) {
-        await _replyImage(content);
+      if (_forceImage) {
+        await _replyImageTool(prompt: content, imageFile: attachedFile);
       } else {
-        await _replyChat(userMessage);
+        await _replyAuto(userMessage: userMessage, imageFile: attachedFile, base64Image: attachedBase64);
       }
     } catch (e) {
-      _snack('发送失败: $e');
+      _log.error('send', '发送处理失败', e.toString());
+      _snack('发送失败，详情请查看控制台');
     } finally {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _forceImage = false;
+        _isLoading = false;
+      });
       _scrollBottom();
     }
   }
 
-  Future<void> _replyImage(String prompt) async {
+  Future<void> _replyAuto({
+    required Message userMessage,
+    required File? imageFile,
+    required String? base64Image,
+  }) async {
+    final thinking = Message(
+      id: '${DateTime.now().millisecondsSinceEpoch + 1}',
+      role: 'assistant',
+      content: '正在判断是否需要调用图片工具…',
+      isGenerating: true,
+    );
+    setState(() => _messages.add(thinking));
+    _scrollBottom();
+
+    final decision = await _apiService.decideTool(
+      userText: userMessage.content,
+      base64Image: base64Image,
+      apiKey: _apiKey,
+      baseUrl: _baseUrl,
+      model: _chatModel,
+    );
+
+    if (!mounted) return;
+    if (decision.action == ToolAction.directAnswer) {
+      setState(() {
+        thinking.content = '';
+        thinking.isGenerating = true;
+      });
+      final model = _apiService.normalizeChatModel(_chatModel);
+      final stream = _apiService.generateChatStream(_messages.sublist(0, _messages.length - 1), _apiKey, _baseUrl, model);
+      await for (final chunk in stream) {
+        if (!mounted) return;
+        setState(() => thinking.content += chunk);
+        _scrollBottom();
+      }
+      if (!mounted) return;
+      setState(() {
+        if (thinking.content.trim().isEmpty) {
+          thinking.content = decision.reply.isEmpty ? '我理解了，但暂时没有生成可展示的回复。' : decision.reply;
+        }
+        thinking.isGenerating = false;
+      });
+      return;
+    }
+
+    setState(() {
+      thinking.content = decision.action == ToolAction.imageToImage ? 'AI 决定调用图生图工具，正在编辑图片…' : 'AI 决定调用文生图工具，正在生成图片…';
+    });
+
+    await _finishImageToolMessage(
+      placeholder: thinking,
+      prompt: decision.prompt.isEmpty ? userMessage.content : decision.prompt,
+      imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,
+      size: decision.size,
+    );
+  }
+
+  Future<void> _replyImageTool({required String prompt, required File? imageFile}) async {
     final placeholder = Message(
       id: '${DateTime.now().millisecondsSinceEpoch + 1}',
       role: 'assistant',
-      content: '正在根据你的描述生成图片…',
+      content: imageFile == null ? '正在根据你的描述生成图片…' : '正在根据参考图生成/编辑图片…',
       isGenerating: true,
     );
     setState(() => _messages.add(placeholder));
     _scrollBottom();
 
-    final url = await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel);
+    await _finishImageToolMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, size: '1024x1024');
+  }
+
+  Future<void> _finishImageToolMessage({
+    required Message placeholder,
+    required String prompt,
+    required File? imageFile,
+    required String size,
+  }) async {
+    final url = imageFile == null
+        ? await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: size)
+        : await _apiService.editImage(prompt, imageFile, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: size);
     if (!mounted) return;
     setState(() {
       final index = _messages.indexWhere((m) => m.id == placeholder.id);
@@ -167,27 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _messages[index] = Message(id: placeholder.id, role: 'assistant', content: url, type: MessageType.image);
       }
     });
-  }
-
-  Future<void> _replyChat(Message userMessage) async {
-    final assistant = Message(
-      id: '${DateTime.now().millisecondsSinceEpoch + 1}',
-      role: 'assistant',
-      content: '',
-      isGenerating: true,
-    );
-    setState(() => _messages.add(assistant));
-    _scrollBottom();
-
-    final model = _apiService.normalizeChatModel(_chatModel);
-    final stream = _apiService.generateChatStream(_messages.sublist(0, _messages.length - 1), _apiKey, _baseUrl, model);
-    await for (final chunk in stream) {
-      if (!mounted) return;
-      setState(() => assistant.content += chunk);
-      _scrollBottom();
-    }
-    if (!mounted) return;
-    setState(() => assistant.isGenerating = false);
   }
 
   Future<void> _pickImage() async {
@@ -198,8 +246,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _attachedFile = File(picked.path);
       _attachedBase64 = base64Encode(bytes);
-      _forceImage = false;
     });
+    _log.info('attachment', '已选择图片', picked.name, details: {'path': picked.path, 'sizeBytes': bytes.length});
   }
 
   Future<void> _saveImage(String url) async {
@@ -208,6 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await ImageSaveService.saveNetworkImage(url);
       _snack('图片已保存到相册');
     } catch (e) {
+      _log.error('image_save', '保存图片失败', e.toString());
       _snack('保存失败: $e');
     }
   }
@@ -252,12 +301,14 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Luna AI', style: TextStyle(color: _text, fontSize: 18, fontWeight: FontWeight.w800)),
-                Text('Chat · Vision · Image', style: TextStyle(color: _muted, fontSize: 11)),
+                Text('Agent · Tools · Image', style: TextStyle(color: _muted, fontSize: 11)),
               ],
             ),
           ],
         ),
         actions: [
+          _topButton(Icons.terminal_rounded, _openConsole),
+          const SizedBox(width: 6),
           _topButton(Icons.delete_outline, _confirmClear),
           const SizedBox(width: 6),
           _topButton(Icons.settings_rounded, _openSettings),
@@ -304,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    _forceImage ? '画图模式已开启，下一条将生成图片' : '聊天与生图已合并，像聊天一样创作',
+                    _forceImage ? '图片工具模式：无图文生图，有图图生图' : '自动模式：LLM 会判断是否调用图片工具',
                     style: const TextStyle(color: _text, fontSize: 15, fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -315,11 +366,11 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 12),
             Row(
               children: [
-                Expanded(child: _quick(Icons.chat_bubble_outline_rounded, '聊天', '直接提问', _secondary, () => setState(() => _forceImage = false))),
+                Expanded(child: _quick(Icons.auto_awesome_rounded, '自动', 'AI 决策', _secondary, () => setState(() => _forceImage = false))),
                 const SizedBox(width: 10),
-                Expanded(child: _quick(Icons.brush_rounded, '生图', '描述画面', _primary, () => setState(() => _forceImage = true))),
+                Expanded(child: _quick(Icons.brush_rounded, '图片工具', '生图/图生图', _primary, () => setState(() => _forceImage = true))),
                 const SizedBox(width: 10),
-                Expanded(child: _quick(Icons.image_search_rounded, '看图', '上传分析', _success, _pickImage)),
+                Expanded(child: _quick(Icons.add_photo_alternate_rounded, '参考图', '上传图片', _success, _pickImage)),
               ],
             ),
           ],
@@ -342,7 +393,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
   Widget _emptyState() {
-    final suggestions = ['总结一下今天的待办', '画一张星空下的未来城市', '帮我写一个短视频脚本'];
+    final suggestions = ['总结一下今天的待办', '画一张星空下的未来城市', '上传图片后说：把它改成动漫风'];
     return ListView(
       padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
       children: [
@@ -358,7 +409,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 18),
             const Text('今天想创造什么？', textAlign: TextAlign.center, style: TextStyle(color: _text, fontSize: 24, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            const Text('同一个输入框即可聊天、生成图片、上传图片分析。', textAlign: TextAlign.center, style: TextStyle(color: _muted, fontSize: 14, height: 1.5)),
+            const Text('多模态模型负责理解意图；图片工具负责文生图和图生图。', textAlign: TextAlign.center, style: TextStyle(color: _muted, fontSize: 14, height: 1.5)),
             const SizedBox(height: 18),
             OutlinedButton.icon(
               onPressed: _openSettings,
@@ -518,8 +569,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
               _inputButton(Icons.add_photo_alternate_rounded, _secondary, _pickImage),
               const SizedBox(width: 6),
-              _inputButton(_forceImage ? Icons.brush_rounded : Icons.brush_outlined, _forceImage ? _primary : _muted,
-                  _attachedFile == null ? () => setState(() => _forceImage = !_forceImage) : null),
+              _inputButton(_forceImage ? Icons.brush_rounded : Icons.auto_awesome_outlined, _forceImage ? _primary : _muted, () => setState(() => _forceImage = !_forceImage)),
               const SizedBox(width: 8),
               Expanded(
                 child: Container(
@@ -535,7 +585,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(color: _text, fontSize: 15),
                     cursorColor: _secondary,
                     decoration: InputDecoration(
-                      hintText: _forceImage ? '描述你想生成的图片...' : '输入消息，或说“画一张…”',
+                      hintText: _forceImage
+                          ? (_attachedFile == null ? '描述你想生成的图片...' : '描述你想如何编辑这张图...')
+                          : (_attachedFile == null ? '输入消息，AI 自动判断是否调用图片工具' : '输入问题或改图要求，AI 自动判断'),
                       hintStyle: const TextStyle(color: _muted, fontSize: 14),
                       border: InputBorder.none,
                     ),
@@ -571,7 +623,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(children: [
           const Icon(Icons.image_rounded, color: _success),
           const SizedBox(width: 10),
-          Expanded(child: Text('已选择待分析图片：${_attachedFile!.path.split('/').last}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _text))),
+          Expanded(child: Text('已选择参考图片：${_attachedFile!.path.split('/').last}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _text))),
           IconButton(
             icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
             onPressed: () => setState(() {
@@ -629,6 +681,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openConsole() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DebugConsoleScreen()));
+  }
+
   Future<void> _openSettings() async {
     FocusManager.instance.primaryFocus?.unfocus();
     try {
@@ -641,10 +697,11 @@ class _HomeScreenState extends State<HomeScreen> {
         imageBaseUrl: settings['imageBaseUrl'] ?? _imageBaseUrl,
         chatModel: settings['chatModel'] ?? _chatModel,
         imageModel: settings['imageModel'] ?? _imageModel,
+        imageEditModel: settings['imageEditModel'] ?? _imageEditModel,
       );
     } catch (_) {
       if (!mounted) return;
-      await _showSettingsDialog(apiKey: _apiKey, imageApiKey: _imageApiKey, baseUrl: _baseUrl, imageBaseUrl: _imageBaseUrl, chatModel: _chatModel, imageModel: _imageModel);
+      await _showSettingsDialog(apiKey: _apiKey, imageApiKey: _imageApiKey, baseUrl: _baseUrl, imageBaseUrl: _imageBaseUrl, chatModel: _chatModel, imageModel: _imageModel, imageEditModel: _imageEditModel);
     }
   }
 
@@ -655,6 +712,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required String imageBaseUrl,
     required String chatModel,
     required String imageModel,
+    required String imageEditModel,
   }) async {
     final keyCtrl = TextEditingController(text: apiKey);
     final imageKeyCtrl = TextEditingController(text: imageApiKey);
@@ -662,6 +720,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final imageUrlCtrl = TextEditingController(text: imageBaseUrl);
     final chatCtrl = TextEditingController(text: chatModel);
     final imageCtrl = TextEditingController(text: imageModel);
+    final imageEditCtrl = TextEditingController(text: imageEditModel);
     try {
       await showDialog<void>(
         context: context,
@@ -672,12 +731,16 @@ class _HomeScreenState extends State<HomeScreen> {
           title: const Row(children: [Icon(Icons.settings_rounded, color: _secondary), SizedBox(width: 10), Text('API 配置参数', style: TextStyle(color: _text, fontWeight: FontWeight.w900))]),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _sectionTitle('聊天 / 决策配置'),
               _field(keyCtrl, '聊天 API Key', 'sk-xxxx'),
-              _field(imageKeyCtrl, '生图 API Key（可留空沿用聊天令牌）', 'sk-image-xxxx'),
               _field(urlCtrl, '聊天 Base URL', 'https://api.openai.com/v1'),
-              _field(imageUrlCtrl, '生图 Base URL（可留空沿用聊天接口）', 'https://api.openai.com/v1'),
-              _field(chatCtrl, '聊天模型', 'gpt-4o-mini'),
-              _field(imageCtrl, '生图模型', 'dall-e-3 / gpt-image-1'),
+              _field(chatCtrl, '多模态聊天模型', 'gpt-4o-mini'),
+              _sectionTitle('图片工具配置'),
+              _field(imageKeyCtrl, '图片 API Key（可留空沿用聊天令牌）', 'sk-image-xxxx'),
+              _field(imageUrlCtrl, '图片 Base URL（可留空沿用聊天接口）', 'https://api.openai.com/v1'),
+              _field(imageCtrl, '文生图模型', 'dall-e-3'),
+              _field(imageEditCtrl, '图生图 / 图片编辑模型', 'gpt-image-1'),
+              const Text('自动模式下，多模态模型会先判断是否需要调用图片工具；强制图片工具模式下，无图走文生图，有图走图生图。', style: TextStyle(color: _muted, fontSize: 12, height: 1.4)),
             ]),
           ),
           actions: [
@@ -689,8 +752,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 final newBase = urlCtrl.text.trim().isEmpty ? 'https://api.openai.com/v1' : urlCtrl.text.trim();
                 final newImageBase = imageUrlCtrl.text.trim();
                 final newChat = chatCtrl.text.trim().isEmpty ? 'gpt-4o-mini' : chatCtrl.text.trim();
-                final rawImageModel = imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim();
-                final newImage = _apiService.normalizeImageModel(rawImageModel);
+                final newImage = _apiService.normalizeImageModel(imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim());
+                final newImageEdit = _apiService.normalizeImageEditModel(imageEditCtrl.text.trim().isEmpty ? 'gpt-image-1' : imageEditCtrl.text.trim());
                 await _settingsService.saveSettings(
                   apiKey: keyCtrl.text.trim(),
                   imageApiKey: newImageKey,
@@ -698,6 +761,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   imageBaseUrl: newImageBase,
                   chatModel: newChat,
                   imageModel: newImage,
+                  imageEditModel: newImageEdit,
                 );
                 if (!mounted) return;
                 setState(() {
@@ -707,10 +771,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   _imageBaseUrl = newImageBase;
                   _chatModel = newChat;
                   _imageModel = newImage;
+                  _imageEditModel = newImageEdit;
+                });
+                _log.success('settings', '设置已保存', 'API 配置已更新', details: {
+                  'hasChatKey': _apiKey.isNotEmpty,
+                  'hasImageKey': newImageKey.isNotEmpty,
+                  'baseUrl': newBase,
+                  'imageBaseUrl': newImageBase,
+                  'chatModel': newChat,
+                  'imageModel': newImage,
+                  'imageEditModel': newImageEdit,
                 });
                 Navigator.pop(dialogContext);
-                final imageKeyTip = newImageKey.isEmpty ? '生图令牌沿用聊天令牌' : '聊天/生图令牌已分开';
-                final imageUrlTip = newImageBase.isEmpty ? '生图接口沿用聊天接口' : '聊天/生图接口已分开';
+                final imageKeyTip = newImageKey.isEmpty ? '图片令牌沿用聊天令牌' : '聊天/图片令牌已分开';
+                final imageUrlTip = newImageBase.isEmpty ? '图片接口沿用聊天接口' : '聊天/图片接口已分开';
                 _snack('设置已保存，$imageKeyTip，$imageUrlTip');
               },
               child: const Text('保存修改', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
@@ -725,8 +799,17 @@ class _HomeScreenState extends State<HomeScreen> {
       imageUrlCtrl.dispose();
       chatCtrl.dispose();
       imageCtrl.dispose();
+      imageEditCtrl.dispose();
     }
   }
+
+  Widget _sectionTitle(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 10, top: 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(text, style: const TextStyle(color: _secondary, fontWeight: FontWeight.w900)),
+        ),
+      );
 
   Widget _field(TextEditingController controller, String label, String hint) => Padding(
         padding: const EdgeInsets.only(bottom: 14),
