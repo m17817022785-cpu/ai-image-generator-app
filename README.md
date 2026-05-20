@@ -5,7 +5,8 @@
 ## ✨ 特性
 
 - **统一输入入口**：聊天、生图、看图分析合并在同一个输入框中。
-- **接口分离配置**：聊天接口和生图接口可以使用不同的 Base URL。
+- **令牌分离配置**：聊天和生图可以使用不同 API Key。
+- **接口分离配置**：聊天接口和生图接口可以使用不同 Base URL。
 - **流式对话**：支持 GPT 级别的打字机实时响应效果。
 - **AI 生图**：输入“画一张…”、“生成图片…”或点击画笔按钮即可生成图像。
 - **视觉分析**：支持上传图片进行多模态视觉分析。
@@ -16,14 +17,16 @@
 ## 🆕 当前版本
 
 ```text
-1.1.2+4
+1.1.3+5
 ```
 
 本版本重点修复：
 
-- 新增“生图 Base URL”设置项。
-- 支持聊天接口和生图接口分别配置不同服务商地址。
-- “生图 Base URL”留空时自动沿用“聊天 Base URL”，兼容旧配置。
+- 新增“生图 API Key”设置项。
+- 支持聊天模型和生图模型使用不同令牌。
+- “生图 API Key”留空时自动沿用“聊天 API Key”，兼容旧配置。
+- 保留“生图 Base URL”设置项，支持聊天接口和生图接口分别配置不同服务商地址。
+- “生图 Base URL”留空时自动沿用“聊天 Base URL”。
 - 保留生图模型保护：误填聊天模型时自动回退到 `dall-e-3` 并给出友好提示。
 
 ## ⚙️ 接口配置说明
@@ -31,25 +34,42 @@
 设置页现在包含：
 
 ```text
-API Key
+聊天 API Key
+生图 API Key（可留空沿用聊天令牌）
 聊天 Base URL
 生图 Base URL（可留空沿用聊天接口）
 聊天模型
 生图模型
 ```
 
-如果你的 LLM 和生图来自同一个 OpenAI 兼容服务：
+如果聊天和生图来自同一个 OpenAI 兼容服务：
 
 ```text
+聊天 API Key = sk-xxxx
+生图 API Key = 留空
 聊天 Base URL = https://xxx/v1
 生图 Base URL = 留空
 ```
 
-如果 LLM 和生图来自不同服务：
+如果聊天和生图来自不同服务商：
 
 ```text
+聊天 API Key = sk-llm-xxxx
+生图 API Key = sk-image-xxxx
 聊天 Base URL = https://llm.example.com/v1
 生图 Base URL = https://image.example.com/v1
+```
+
+聊天请求会调用：
+
+```text
+聊天 Base URL + /chat/completions
+```
+
+生图请求会调用：
+
+```text
+生图 Base URL + /images/generations
 ```
 
 生图模型请填写图片模型，例如：
