@@ -46,7 +46,28 @@ jobs:
         run: flutter analyze --no-fatal-infos
 
       - name: Build release APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          BUILD_NAME=${APP_VERSION%%+*}
+          PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
+          RUN_NUMBER=${GITHUB_RUN_NUMBER:-0}
+
+          if ! [[ "$PUBSPEC_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            PUBSPEC_BUILD_NUMBER=1
+          fi
+          if ! [[ "$RUN_NUMBER" =~ ^[0-9]+$ ]]; then
+            RUN_NUMBER=0
+          fi
+
+          if [ "$RUN_NUMBER" -gt "$PUBSPEC_BUILD_NUMBER" ]; then
+            BUILD_NUMBER="$RUN_NUMBER"
+          else
+            BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
+          fi
+
+          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=$RUN_NUMBER"
+          flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Collect APK
         run: |
