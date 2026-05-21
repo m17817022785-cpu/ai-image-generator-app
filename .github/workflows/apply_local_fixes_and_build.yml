@@ -1,0 +1,195 @@
+name: Apply Local Fixes and Build APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply local fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def rw(path, fn):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              ns = fn(s)
+              if ns != s:
+                  p.write_text(ns, encoding='utf-8')
+                  print(f'updated {path}')
+              else:
+                  print(f'no change {path}')
+
+          def replace_once(s, old, new):
+              return s.replace(old, new, 1) if old in s else s
+
+          # pubspec version bump
+          rw('pubspec.yaml', lambda s: re.sub(r'^version:\s*.*$', 'version: 1.2.6+1002', s, flags=re.M))
+
+          # SettingsService: persist studio header collapsed state
+          def patch_settings(s):
+              if '_keyStudioHeaderCollapsed' not in s:
+                  s = s.replace("  static const String _keyImageCount = 'image_count';", "  static const String _keyImageCount = 'image_count';\n  static const String _keyStudioHeaderCollapsed = 'studio_header_collapsed';")
+              if 'bool? studioHeaderCollapsed,' not in s:
+                  s = s.replace('    int imageCount = 1,\n  }) async {', '    int imageCount = 1,\n    bool? studioHeaderCollapsed,\n  }) async {')
+              if '_keyStudioHeaderCollapsed, studioHeaderCollapsed' not in s and 'studioHeaderCollapsed != null' not in s:
+                  s = s.replace('    await prefs.setInt(_keyImageCount, imageCount.clamp(1, 4).toInt());', "    await prefs.setInt(_keyImageCount, imageCount.clamp(1, 4).toInt());\n    if (studioHeaderCollapsed != null) await prefs.setBool(_keyStudioHeaderCollapsed, studioHeaderCollapsed);")
+              if "'studioHeaderCollapsed'" not in s:
+                  s = s.replace("      'imageCount': (prefs.getInt(_keyImageCount) ?? 1).clamp(1, 4).toString(),", "      'imageCount': (prefs.getInt(_keyImageCount) ?? 1).clamp(1, 4).toString(),\n      'studioHeaderCollapsed': (prefs.getBool(_keyStudioHeaderCollapsed) ?? true).toString(),")
+              if 'prefs.remove(_keyStudioHeaderCollapsed)' not in s:
+                  s = s.replace('    await prefs.remove(_keyImageCount);', '    await prefs.remove(_keyImageCount);\n    await prefs.remove(_keyStudioHeaderCollapsed);')
+              return s
+          rw('lib/services/settings_service.dart', patch_settings)
+
+          # ApiService: avoid RangeError when choices/data arrays are empty.
+          def patch_api(s):
+              s = s.replace("    final raw = parsed['choices']?[0]?['message']?['content']?.toString() ?? '';\n    final decision = _parseDecision(raw, userText: userText, hasImage: hasImage);", "    final choices = parsed['choices'];\n    final firstChoice = choices is List && choices.isNotEmpty ? choices.first : null;\n    final firstMessage = firstChoice is Map ? firstChoice['message'] : null;\n    final raw = firstMessage is Map ? firstMessage['content']?.toString() ?? '' : '';\n    final decision = _parseDecision(raw, userText: userText, hasImage: hasImage);")
+              s = s.replace("    final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';", "    final choices = parsed['choices'];\n    final firstChoice = choices is List && choices.isNotEmpty ? choices.first : null;\n    final firstMessage = firstChoice is Map ? firstChoice['message'] : null;\n    final refined = (firstMessage is Map ? firstMessage['content']?.toString().trim() : null) ?? '';")
+              s = s.replace("            final delta = parsed['choices']?[0]?['delta']?['content'] ?? '';", "            final choices = parsed['choices'];\n            final firstChoice = choices is List && choices.isNotEmpty ? choices.first : null;\n            final deltaMap = firstChoice is Map ? firstChoice['delta'] : null;\n            final delta = deltaMap is Map ? deltaMap['content'] ?? '' : '';")
+              s = s.replace("          final content = parsed['choices']?[0]?['message']?['content'] ?? '';", "          final choices = parsed['choices'];\n          final firstChoice = choices is List && choices.isNotEmpty ? choices.first : null;\n          final firstMessage = firstChoice is Map ? firstChoice['message'] : null;\n          final content = firstMessage is Map ? firstMessage['content'] ?? '' : '';")
+              s = s.replace("    final content = data['choices']?[0]?['message']?['content']?.toString() ?? data['choices']?[0]?['text']?.toString() ?? '';", "    final choices = data['choices'];\n    final firstChoice = choices is List && choices.isNotEmpty ? choices.first : null;\n    final firstMessage = firstChoice is Map ? firstChoice['message'] : null;\n    final content = firstMessage is Map ? firstMessage['content']?.toString() ?? '' : firstChoice is Map ? firstChoice['text']?.toString() ?? '' : '';")
+              s = s.replace("    final first = data['data']?[0];", "    final rawData = data['data'];\n    final first = rawData is List && rawData.isNotEmpty ? rawData.first : null;")
+              return s
+          rw('lib/services/api_service.dart', patch_api)
+
+          # HomeScreen: new session, friendly errors, collapsible studio header.
+          def patch_home(s):
+              if 'bool _studioHeaderCollapsed' not in s:
+                  s = s.replace('  bool _forceImage = false;\n', '  bool _forceImage = false;\n  bool _studioHeaderCollapsed = true;\n', 1)
+              if "s['studioHeaderCollapsed']" not in s:
+                  s = s.replace("      _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';", "      _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n      _studioHeaderCollapsed = (s['studioHeaderCollapsed'] ?? 'true') == 'true';")
+              if 'studioHeaderCollapsed: _studioHeaderCollapsed' not in s:
+                  s = s.replace('        imageCount: _imageCount,\n      );', '        imageCount: _imageCount,\n        studioHeaderCollapsed: _studioHeaderCollapsed,\n      );', 1)
+              if 'String _friendlyError(Object error)' not in s:
+                  marker = '  Future<void> _pickImages() async {' if 'Future<void> _pickImages() async' in s else '  Future<void> _pickImage() async {'
+                  helper = """  String _friendlyError(Object error) {
+    final raw = error.toString();
+    if (raw.contains('RangeError')) return '发送失败：服务器返回内容为空或格式异常，请稍后重试。';
+    if (raw.contains('SocketException') || raw.contains('connection reset') || raw.contains('read_response_body_failed')) return '发送失败：网络连接中断或服务器提前断开，请稍后重试。';
+    if (raw.contains('TimeoutException')) return '发送失败：请求超时，请稍后重试。';
+    return '发送失败：$raw';
+  }
+
+  Future<void> _confirmNewSession() async {
+    if (_loading) {
+      _snack('正在发送中，请等待当前请求结束后再新建会话');
+      return;
+    }
+    if (_messages.isEmpty && _input.text.trim().isEmpty && _attachedFiles.isEmpty) {
+      _startNewSession();
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('开始新会话？'),
+        content: const Text('当前聊天内容会从界面中清空，API 配置、图片参数和面板状态会保留。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('新会话')),
+        ],
+      ),
+    );
+    if (confirmed == true) _startNewSession();
+  }
+
+  void _startNewSession() {
+    if (!mounted) return;
+    setState(() {
+      _messages.clear();
+      _input.clear();
+      _attachedFiles.clear();
+      _attachedBase64Images.clear();
+      _loading = false;
+      _forceImage = false;
+    });
+    _snack('已开始新会话');
+  }
+
+"""
+                  s = s.replace(marker, helper + marker, 1)
+              s = s.replace("      _snack('发送失败：$e');", "      final friendly = _friendlyError(e);\n      _markLastGeneratingAsFailed(friendly);\n      _snack(friendly);")
+              s = s.replace("      _markLastGeneratingAsFailed('发送失败：$e');\n      _snack('发送失败：$e');", "      final friendly = _friendlyError(e);\n      _markLastGeneratingAsFailed(friendly);\n      _snack(friendly);")
+              if "tooltip: '新会话'" not in s:
+                  s = s.replace("actions: [IconButton(onPressed: _openSettings, icon: const Icon(Icons.settings_rounded, color: _text))],", "actions: [IconButton(tooltip: '新会话', onPressed: _confirmNewSession, icon: const Icon(Icons.add_comment_rounded, color: _text)), IconButton(tooltip: '设置', onPressed: _openSettings, icon: const Icon(Icons.settings_rounded, color: _text))],")
+                  s = s.replace("actions: [\n          _roundIcon(Icons.terminal_rounded", "actions: [\n          _roundIcon(Icons.add_comment_rounded, _confirmNewSession),\n          _roundIcon(Icons.terminal_rounded")
+              if 'Widget _collapsedStudioHeader()' not in s and 'Widget _studioHeader() => _panel(' in s:
+                  s = s.replace('  Widget _studioHeader() => _panel(', '  Widget _studioHeader() {\n    if (_studioHeaderCollapsed) return _collapsedStudioHeader();\n    return _panel(', 1)
+                  s = s.replace("            TextButton.icon(onPressed: _openImageParams, icon: const Icon(Icons.tune_rounded), label: const Text('图片参数')),\n          ]),", "            TextButton.icon(onPressed: _openImageParams, icon: const Icon(Icons.tune_rounded), label: const Text('图片参数')),\n            IconButton(tooltip: '收起智能创作面板', onPressed: () async { setState(() => _studioHeaderCollapsed = true); await _saveSettings(); }, icon: const Icon(Icons.keyboard_arrow_up_rounded, color: _muted)),\n          ]),", 1)
+                  s = s.replace("        ]),\n      );\n\n  Widget _modeButton", "        ]),\n      );\n  }\n\n  Widget _collapsedStudioHeader() => _panel(\n        margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),\n        padding: const EdgeInsets.all(12),\n        child: InkWell(\n          onTap: () async { setState(() => _studioHeaderCollapsed = false); await _saveSettings(); },\n          borderRadius: BorderRadius.circular(18),\n          child: Row(children: [\n            const Icon(Icons.auto_awesome_rounded, color: _primary, size: 28),\n            const SizedBox(width: 10),\n            Expanded(child: Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontWeight: FontWeight.w900), overflow: TextOverflow.ellipsis)),\n            const Icon(Icons.keyboard_arrow_down_rounded, color: _muted),\n          ]),\n        ),\n      );\n\n  Widget _modeButton", 1)
+              return s
+          rw('lib/screens/home_screen.dart', patch_home)
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Format and validate
+        shell: bash
+        run: |
+          dart format lib pubspec.yaml || true
+          flutter pub get
+          flutter analyze --no-fatal-infos
+
+      - name: Commit applied fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add pubspec.yaml lib/services/settings_service.dart lib/services/api_service.dart lib/screens/home_screen.dart
+            git commit -m "fix: restore session reset and robust image workflow"
+            git push
+          else
+            echo "No source changes to commit."
+          fi
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          BUILD_NAME=${APP_VERSION%%+*}
+          PUBSPEC_BUILD_NUMBER=${APP_VERSION##*+}
+          RUN_NUMBER=${GITHUB_RUN_NUMBER:-0}
+          if ! [[ "$PUBSPEC_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then PUBSPEC_BUILD_NUMBER=1; fi
+          if ! [[ "$RUN_NUMBER" =~ ^[0-9]+$ ]]; then RUN_NUMBER=0; fi
+          if [ "$RUN_NUMBER" -gt "$PUBSPEC_BUILD_NUMBER" ]; then BUILD_NUMBER="$RUN_NUMBER"; else BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"; fi
+          flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/AI-Image-Generator-release.apk
+          ls -lh artifacts
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Image-Generator-release-apk
+          path: artifacts/AI-Image-Generator-release.apk
+          if-no-files-found: error
+          retention-days: 30
