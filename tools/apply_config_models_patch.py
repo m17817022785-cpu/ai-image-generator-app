@@ -1,153 +1,75 @@
 from pathlib import Path
 import re
 
-p=Path('lib/screens/home_screen.dart')
-s=p.read_text(encoding='utf-8')
+home = Path('lib/screens/home_screen.dart')
+api = Path('lib/services/api_service.dart')
 
-def rep(a,b):
-    global s
-    if a in s:
-        s=s.replace(a,b,1)
-    elif b not in s:
-        raise SystemExit('missing snippet: '+a[:120])
+s = home.read_text(encoding='utf-8')
+s = s.replace("      imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,\n      base64Image: null, base64Images: base64Images,", "      imageFiles: decision.action == ToolAction.imageToImage ? imageFiles : const <File>[],\n      base64Images: decision.action == ToolAction.imageToImage ? base64Images : const <String>[] ,")
+s = s.replace("const <String>[] ,", "const <String>[],")
+s = s.replace("await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, base64Image: null, base64Images: base64Images, quality: quality);", "await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFiles: imageFiles, base64Images: base64Images, quality: quality);")
+s = re.sub(r"\n\s*if \(_attachedFiles\.isNotEmpty\) Container\(margin: const EdgeInsets\.only\(bottom: 8\).*?_primary\)\)\)\),", "\n          if (_attachedFiles.isNotEmpty) _attachedPreviewStrip(),", s, count=1, flags=re.S)
+s = s.replace("if (msg.localFilePath != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.localFilePath!.split('/').last}', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12)))", "if (msg.effectiveLocalFilePaths.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.effectiveLocalFilePaths.length} 张', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12)))")
+home.write_text(s, encoding='utf-8')
 
-rep('  bool _enhanceImagePrompt = true;\n  File? _attachedFile;\n  String? _attachedBase64;', '  bool _enhanceImagePrompt = true;\n  int _imageCount = 1;\n  final List<File> _attachedFiles = [];\n  final List<String> _attachedBase64Images = [];')
-rep("  static const _qualityOptions = ['auto', 'standard', 'hd', 'low', 'medium', 'high'];", "  static const _qualityOptions = ['auto', 'standard', 'hd', 'low', 'medium', 'high'];\n  static const _imageCountOptions = [1, 2, 3, 4];\n  static const _maxReferenceImages = 8;")
-rep("        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';", "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        _imageCount = int.tryParse(s['imageCount'] ?? '1')?.clamp(1, 4).toInt() ?? 1;")
-rep('        enhanceImagePrompt: _enhanceImagePrompt,', '        enhanceImagePrompt: _enhanceImagePrompt,\n        imageCount: _imageCount,')
-
-old_pick='''  Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
-    if (picked == null) return;
-    final file = File(picked.path);
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _attachedFile = file;
-      _attachedBase64 = base64Encode(bytes);
-    });
-  }'''
-new_pick='''  Future<void> _pickImage() async {
-    final remaining = _maxReferenceImages - _attachedFiles.length;
-    if (remaining <= 0) {
-      _snack('最多支持 $_maxReferenceImages 张参考图，请先删除部分图片。');
-      return;
-    }
-    final picked = await ImagePicker().pickMultiImage(imageQuality: 75);
-    if (picked.isEmpty) return;
-    final files = <File>[];
+t = api.read_text(encoding='utf-8')
+if 'List<String> _effectiveImages(' not in t:
+    marker = "  Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image) {"
+    helper = """  List<String> _effectiveImages(String? base64Image, List<String>? base64Images) {
     final images = <String>[];
-    for (final item in picked.take(remaining)) {
-      final file = File(item.path);
-      files.add(file);
-      images.add(base64Encode(await file.readAsBytes()));
+    if (base64Images != null) images.addAll(base64Images.map((e) => e.trim()).where((e) => e.isNotEmpty));
+    if (images.isEmpty && base64Image != null && base64Image.trim().isNotEmpty) images.add(base64Image.trim());
+    return images;
+  }
+
+"""
+    t = t.replace(marker, helper + marker, 1)
+
+t = t.replace("Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image) {", "Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image, {List<String>? base64Images}) {")
+t = re.sub(r"if \(base64Image != null && base64Image\.trim\(\)\.isNotEmpty\) \{\s*return \{\s*'role': role,\s*'content': \[\s*\{'type': 'text', 'text': text\},\s*\{'type': 'image_url', 'image_url': \{'url': 'data:image/jpeg;base64,\$base64Image'\}\},\s*\]\s*\};\s*\}", "final images = _effectiveImages(base64Image, base64Images);\n    if (images.isNotEmpty) {\n      return {'role': role, 'content': [{'type': 'text', 'text': text}, ...images.map((image) => {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,$image'}})]};\n    }", t, count=1, flags=re.S)
+
+t = t.replace("Future<ToolDecision> decideTool({required String userText, required String? base64Image, required String apiKey, required String baseUrl, required String model})", "Future<ToolDecision> decideTool({required String userText, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model})")
+t = t.replace("Future<String> refineImagePrompt({required String userText, required String? base64Image, required String apiKey, required String baseUrl, required String model, required String aspectRatio, required String size, required String quality, required bool isEdit})", "Future<String> refineImagePrompt({required String userText, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model, required String aspectRatio, required String size, required String quality, required bool isEdit})")
+t = t.replace("_imageContentMessage('user', decisionText, base64Image)", "_imageContentMessage('user', decisionText, null, base64Images: _effectiveImages(base64Image, base64Images))")
+t = t.replace("_imageContentMessage('user', userInstruction, base64Image)", "_imageContentMessage('user', userInstruction, null, base64Images: _effectiveImages(base64Image, base64Images))")
+t = t.replace("final hasImage = base64Image != null && base64Image.trim().isNotEmpty;", "final hasImage = _effectiveImages(base64Image, base64Images).isNotEmpty;")
+
+if 'Future<String> editImages(' not in t:
+    method = """
+  Future<String> editImages(String prompt, List<File> imageFiles, String apiKey, String baseUrl, String model, {String size = '1024x1024', String quality = 'auto'}) async {
+    if (imageFiles.isEmpty) return generateImage(prompt, apiKey, baseUrl, model, size: size, quality: quality);
+    if (imageFiles.length == 1) return editImage(prompt, imageFiles.first, apiKey, baseUrl, model, size: size, quality: quality);
+    if (_useChatImageEndpoint(baseUrl)) {
+      final images = <String>[];
+      for (final file in imageFiles) {
+        images.add(base64Encode(await file.readAsBytes()));
+      }
+      return _callChatStyleImageTool(prompt: prompt, base64Image: null, base64Images: images, apiKey: apiKey, baseUrl: baseUrl, model: model, size: size, quality: quality, category: 'image_to_image', title: '图生图 / 图片编辑');
     }
-    if (!mounted) return;
-    setState(() {
-      _attachedFiles.addAll(files);
-      _attachedBase64Images.addAll(images);
-    });
-    if (picked.length > remaining) _snack('最多支持 $_maxReferenceImages 张参考图，已添加前 $remaining 张。');
+    final url = _endpoint(baseUrl, '/images/edits');
+    final editModel = normalizeImageEditModel(model);
+    final qualityValue = _normalizeImageQuality(quality, editModel);
+    final request = http.MultipartRequest('POST', url)
+      ..headers['Accept'] = 'application/json'
+      ..headers['Authorization'] = 'Bearer ' + apiKey.trim()
+      ..fields['model'] = editModel
+      ..fields['prompt'] = prompt
+      ..fields['n'] = '1'
+      ..fields['size'] = size;
+    if (qualityValue != null) request.fields['quality'] = qualityValue;
+    for (final file in imageFiles) {
+      request.files.add(await http.MultipartFile.fromPath('image', file.path));
+    }
+    final response = await http.Response.fromStream(await request.send());
+    final bodyText = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_friendlyImageError(bodyText, model, editModel, '图生图 / 图片编辑'));
+    return _extractImageResult(bodyText, endpoint: url.toString(), model: editModel, category: 'image_to_image');
   }
+"""
+    t = t.replace("\n  Future<String> _callChatStyleImageTool", method + "\n  Future<String> _callChatStyleImageTool", 1)
 
-  void _removeAttachedImage(int index) {
-    if (index < 0 || index >= _attachedFiles.length) return;
-    setState(() {
-      _attachedFiles.removeAt(index);
-      if (index < _attachedBase64Images.length) _attachedBase64Images.removeAt(index);
-    });
-  }
-
-  void _clearAttachedImages() {
-    setState(() {
-      _attachedFiles.clear();
-      _attachedBase64Images.clear();
-    });
-  }'''
-rep(old_pick,new_pick)
-
-s=s.replace('final file = _attachedFile;\n    final b64 = _attachedBase64;', 'final files = List<File>.from(_attachedFiles);\n    final b64s = List<String>.from(_attachedBase64Images);')
-s=s.replace('if (text.isEmpty && file == null) return;', 'if (text.isEmpty && files.isEmpty) return;')
-s=s.replace("final content = text.isEmpty ? '请根据这张图片继续处理' : text;", "final content = text.isEmpty ? (files.length > 1 ? '请根据这些图片继续处理' : '请根据这张图片继续处理') : text;")
-s=s.replace('localFilePath: file?.path, base64Image: b64', 'localFilePaths: files.map((e) => e.path).toList(), base64Images: b64s')
-s=s.replace('_attachedFile = null;\n      _attachedBase64 = null;', '_attachedFiles.clear();\n      _attachedBase64Images.clear();')
-s=s.replace("'hasImage': file != null", "'referenceImageCount': files.length, 'generateImageCount': _imageCount")
-s=s.replace('imageFile: file, base64Image: b64', 'imageFiles: files, base64Images: b64s')
-
-s=s.replace('required File? imageFile, required String? base64Image', 'required List<File> imageFiles, required List<String> base64Images')
-s=s.replace('base64Image: base64Image', 'base64Image: null, base64Images: base64Images')
-s=s.replace('imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,\n      base64Image: base64Image,', 'imageFiles: decision.action == ToolAction.imageToImage ? imageFiles : const <File>[],\n      base64Images: decision.action == ToolAction.imageToImage ? base64Images : const <String>[],')
-s=s.replace('imageFile == null ? \'正在构建画面…\' : \'正在分析参考图并生成新画面…\'', 'imageFiles.isEmpty ? \'正在构建画面…\' : \'正在读取参考图并生成新画面…\'')
-s=s.replace('imageFile: imageFile, base64Image: base64Image', 'imageFiles: imageFiles, base64Images: base64Images')
-s=s.replace('isEdit: imageFile != null', 'isEdit: imageFiles.isNotEmpty')
-
-old_gen='''    if (mounted) setState(() => placeholder.content = imageFile == null ? '正在生成 $_imageAspectRatio 画面…' : '正在编辑 $_imageAspectRatio 参考图…');
-    final image = imageFile == null
-        ? await _api.generateImage(finalPrompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: _selectedSize, quality: quality)
-        : await _api.editImage(finalPrompt, imageFile, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: _selectedSize, quality: quality);
-    if (!mounted) return;
-    setState(() {
-      final index = _messages.indexWhere((m) => m.id == placeholder.id);
-      if (index >= 0) _messages[index] = Message(id: placeholder.id, role: 'assistant', content: image, type: MessageType.image);
-    });'''
-new_gen='''    final total = _imageCount.clamp(1, 4).toInt();
-    final generated = <String>[];
-    try {
-      for (var i = 0; i < total; i++) {
-        if (mounted) setState(() => placeholder.content = imageFiles.isEmpty ? '正在生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…' : '正在参考 ${imageFiles.length} 张图生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…');
-        final image = imageFiles.isEmpty
-            ? await _api.generateImage(finalPrompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: _selectedSize, quality: quality)
-            : await _api.editImages(finalPrompt, imageFiles, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: _selectedSize, quality: quality);
-        generated.add(image);
-        if (!mounted) return;
-        setState(() {
-          if (i == 0) {
-            final index = _messages.indexWhere((m) => m.id == placeholder.id);
-            if (index >= 0) _messages[index] = Message(id: placeholder.id, role: 'assistant', content: image, type: MessageType.image);
-          } else {
-            _messages.add(Message(id: '${DateTime.now().microsecondsSinceEpoch + i}', role: 'assistant', content: image, type: MessageType.image));
-          }
-        });
-        _scrollBottom();
-      }
-      if (generated.length > 1) _snack('已生成 ${generated.length} 张图片');
-    } catch (e) {
-      if (generated.isNotEmpty) {
-        _snack('已生成 ${generated.length} / $total 张，后续生成失败：$e');
-        return;
-      }
-      rethrow;
-    }'''
-rep(old_gen,new_gen)
-
-s=s.replace('· ${_qualityLabel(_imageQuality)}画质', '· ${_qualityLabel(_imageQuality)}画质 · $_imageCount 张')
-s=s.replace("· ${_enhanceImagePrompt ? '润色开' : '润色关'}", "· $_imageCount 张 · ${_enhanceImagePrompt ? '润色开' : '润色关'}")
-s=s.replace('_attachedFile != null', '_attachedFiles.isNotEmpty')
-
-insert='''  Widget _attachedPreviewStrip() => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [const Icon(Icons.image_rounded, color: _cyan), const SizedBox(width: 8), Expanded(child: Text('参考图 ${_attachedFiles.length} / $_maxReferenceImages，可继续追加或单张删除', style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)), TextButton(onPressed: _clearAttachedImages, child: const Text('清空'))]),
-          const SizedBox(height: 6),
-          SizedBox(height: 78, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _attachedFiles.length + (_attachedFiles.length < _maxReferenceImages ? 1 : 0), separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, i) {
-            if (i == _attachedFiles.length) return InkWell(onTap: _pickImage, borderRadius: BorderRadius.circular(16), child: Container(width: 74, decoration: BoxDecoration(color: Colors.white.withOpacity(.72), borderRadius: BorderRadius.circular(16), border: Border.all(color: _line)), child: const Icon(Icons.add_photo_alternate_rounded, color: _primary)));
-            return Stack(children: [ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.file(_attachedFiles[i], width: 74, height: 78, fit: BoxFit.cover)), Positioned(top: 3, right: 3, child: InkWell(onTap: () => _removeAttachedImage(i), child: Container(width: 22, height: 22, decoration: BoxDecoration(color: Colors.black.withOpacity(.55), shape: BoxShape.circle), child: const Icon(Icons.close_rounded, color: Colors.white, size: 16))))]);
-          })),
-        ]),
-      );
-
-'''
-if '_attachedPreviewStrip()' not in s:
-    s=s.replace('  Widget _imageMessage(String url) {\n', insert+'  Widget _imageMessage(String url) {\n',1)
-s=re.sub(r'          if \(_attachedFiles\.isNotEmpty\)\s+Container\(.*?\),\n\s+Row\(children:', '          if (_attachedFiles.isNotEmpty) _attachedPreviewStrip(),\n          Row(children:', s, count=1, flags=re.S)
-
-needle='''                Wrap(spacing: 8, runSpacing: 8, children: _qualityOptions.map((v) => _choice(_qualityLabel(v), _imageQuality == v, () => apply(() async { _imageQuality = v; await _saveAllSettings(); }))).toList()),
-                const SizedBox(height: 14),
-                SwitchListTile.adaptive('''
-if '生成数量' not in s:
-    s=s.replace(needle, needle.replace('const SizedBox(height: 14),\n                SwitchListTile.adaptive(', "const SizedBox(height: 18),\n                const Text('生成数量', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),\n                const SizedBox(height: 10),\n                Wrap(spacing: 8, runSpacing: 8, children: _imageCountOptions.map((v) => _choice('$v 张', _imageCount == v, () => apply(() async { _imageCount = v; await _saveAllSettings(); }))).toList()),\n                const SizedBox(height: 6),\n                const Text('选择多张时会自动连续生成，并保留已成功的图片。', style: TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w600)),\n                const SizedBox(height: 14),\n                SwitchListTile.adaptive("))
-
-p.write_text(s,encoding='utf-8')
-print('patched home_screen.dart multi image count')
+t = t.replace("Future<String> _callChatStyleImageTool({required String prompt, required String? base64Image, required String apiKey, required String baseUrl, required String model, required String size, String quality = 'auto', required String category, required String title})", "Future<String> _callChatStyleImageTool({required String prompt, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model, required String size, String quality = 'auto', required String category, required String title})")
+t = t.replace("final hasImage = base64Image != null && base64Image.trim().isNotEmpty;\n    final instruction = hasImage", "final images = _effectiveImages(base64Image, base64Images);\n    final hasImage = images.isNotEmpty;\n    final instruction = hasImage")
+t = t.replace("_imageContentMessage('user', instruction, base64Image)", "_imageContentMessage('user', instruction, null, base64Images: images)")
+api.write_text(t, encoding='utf-8')
+print('patched api_service.dart and home_screen.dart compile errors')
