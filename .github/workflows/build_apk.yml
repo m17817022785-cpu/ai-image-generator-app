@@ -2,73 +2,48 @@ name: Build Flutter APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-          cache: 'gradle'
-
-      - name: Cache Android debug keystore for stable fallback signing
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-
-      - name: Restore release keystore from secrets if configured
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
-            printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/key.properties
-            echo "Release keystore restored from GitHub Secrets."
-          else
-            echo "Release keystore secrets are not configured. Falling back to cached debug keystore."
-          fi
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
           flutter-version: '3.22.2'
           cache: true
 
       - name: Patch studio header collapsed by default
         shell: bash
         run: |
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           p = Path('lib/screens/home_screen.dart')
           s = p.read_text(encoding='utf-8')
-
           if 'bool _studioHeaderCollapsed = true;' not in s:
               s = s.replace('  bool _enhanceImagePrompt = true;\n', '  bool _enhanceImagePrompt = true;\n  bool _studioHeaderCollapsed = true;\n')
-
-          old_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n      });"
-          new_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        // 默认收起对话上方的创作模式面板，用户仍可点箭头展开。\n        _studioHeaderCollapsed = true;\n      });"
-          if new_load not in s and old_load in s:
-              s = s.replace(old_load, new_load)
-
           if '_studioHeaderCollapsed ? _compactStudioHeader() : _studioHeader()' not in s:
               s = s.replace('SafeArea(top: false, child: Column(children: [_studioHeader(),', 'SafeArea(top: false, child: Column(children: [_studioHeaderCollapsed ? _compactStudioHeader() : _studioHeader(),')
-
+          old_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n      });"
+          new_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        _studioHeaderCollapsed = true;\n      });"
+          if old_load in s and new_load not in s:
+              s = s.replace(old_load, new_load)
           old_chip = '            _statusChip(),\n          ]),'
           new_chip = '''            _statusChip(),
             const SizedBox(width: 4),
@@ -81,7 +56,6 @@ jobs:
           ]),'''
           if "tooltip: '收起面板'" not in s and old_chip in s:
               s = s.replace(old_chip, new_chip)
-
           marker = '  Widget _statusChip() => InkWell('
           compact = r'''
   Widget _compactStudioHeader() => _glassPanel(
@@ -89,42 +63,23 @@ jobs:
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         radius: 22,
         child: Row(children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: const LinearGradient(colors: [_primary, _primary2])),
-            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
-          ),
+          Container(width: 38, height: 38, decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: const LinearGradient(colors: [_primary, _primary2])), child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20)),
           const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(_forceImage ? '生图模式' : '智能模式', style: const TextStyle(color: _text, fontSize: 14, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 2),
-              Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}', overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w700)),
-            ]),
-          ),
-          IconButton(
-            tooltip: '图片参数',
-            onPressed: _openImageParams,
-            icon: const Icon(Icons.tune_rounded, color: _primary),
-            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-          ),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text(_forceImage ? '生图模式' : '智能模式', style: const TextStyle(color: _text, fontSize: 14, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 2),
+            Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}', overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          ])),
+          IconButton(tooltip: '图片参数', onPressed: _openImageParams, icon: const Icon(Icons.tune_rounded, color: _primary), style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))),
           const SizedBox(width: 4),
-          IconButton(
-            tooltip: '展开面板',
-            onPressed: () => setState(() => _studioHeaderCollapsed = false),
-            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _muted),
-            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-          ),
+          IconButton(tooltip: '展开面板', onPressed: () => setState(() => _studioHeaderCollapsed = false), icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _muted), style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)))),
         ]),
       );
 
 '''
           if '_compactStudioHeader() =>' not in s and marker in s:
               s = s.replace(marker, compact + marker)
-
           p.write_text(s, encoding='utf-8')
-
           pub = Path('pubspec.yaml')
           ps = pub.read_text(encoding='utf-8').replace('version: 1.2.2+85', 'version: 1.2.3+86')
           pub.write_text(ps, encoding='utf-8')
@@ -143,7 +98,6 @@ jobs:
           if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
             BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
           fi
-          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Upload APK Artifact
