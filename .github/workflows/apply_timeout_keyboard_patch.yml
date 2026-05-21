@@ -1,0 +1,86 @@
+name: Apply timeout keyboard patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch Dart sources
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          api = Path('lib/services/api_service.dart')
+          s = api.read_text()
+          if "import 'dart:async';" not in s:
+              s = s.replace("import 'dart:convert';", "import 'dart:async';\nimport 'dart:convert';")
+          if "_textToImageTimeout" not in s:
+              marker = "class ApiService {\n  final DebugLogService _log = DebugLogService.instance;\n"
+              block = "class ApiService {\n  final DebugLogService _log = DebugLogService.instance;\n\n  static const Duration _modelListTimeout = Duration(seconds: 30);\n  static const Duration _chatTimeout = Duration(seconds: 120);\n  static const Duration _promptRefineTimeout = Duration(seconds: 120);\n  static const Duration _textToImageTimeout = Duration(seconds: 300);\n  static const Duration _imageToImageTimeout = Duration(seconds: 600);\n\n  Future<T> _withTimeout<T>(Future<T> future, Duration timeout, String stage) {\n    return future.timeout(\n      timeout,\n      onTimeout: () => throw TimeoutException('$stage 超时，已等待 ${timeout.inSeconds} 秒。请稍后重试，或降低图片数量/质量。'),\n    );\n  }\n\n  Future<http.Response> _get(Uri url, {required Map<String, String> headers, required Duration timeout, required String stage}) {\n    return _withTimeout(http.get(url, headers: headers), timeout, stage);\n  }\n\n  Future<http.Response> _post(Uri url, {required Map<String, String> headers, required Object? body, required Duration timeout, required String stage}) {\n    return _withTimeout(http.post(url, headers: headers, body: body), timeout, stage);\n  }\n\n  Future<http.StreamedResponse> _send(http.BaseRequest request, {required Duration timeout, required String stage}) {\n    return _withTimeout(request.send(), timeout, stage);\n  }\n"
+              s = s.replace(marker, block)
+          replacements = {
+              "final response = await http.get(url, headers: {'Accept': 'application/json', if (apiKey.trim().isNotEmpty) 'Authorization': 'Bearer ${apiKey.trim()}'});": "final response = await _get(url, headers: {'Accept': 'application/json', if (apiKey.trim().isNotEmpty) 'Authorization': 'Bearer ${apiKey.trim()}'}, timeout: _modelListTimeout, stage: '获取模型列表');",
+              "final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', decisionText, null, base64Images: images)], 'stream': false}));": "final response = await _post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', decisionText, null, base64Images: images)], 'stream': false}), timeout: _chatTimeout, stage: '工具决策');",
+              "final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userInstruction, null, base64Images: images)], 'stream': false}));": "final response = await _post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userInstruction, null, base64Images: images)], 'stream': false}), timeout: _promptRefineTimeout, stage: '提示词润色');",
+              "final response = await client.send(request);": "final response = await _withTimeout(client.send(request), _chatTimeout, '聊天回复');",
+              "final errorMsg = utf8.decode(await response.stream.toBytes());": "final errorMsg = utf8.decode(await _withTimeout(response.stream.toBytes(), _chatTimeout, '读取聊天错误响应'));",
+              "await for (final line in stream) {": "await for (final line in stream.timeout(_chatTimeout, onTimeout: (sink) => sink.addError(TimeoutException('聊天流式响应超时，已等待 ${_chatTimeout.inSeconds} 秒。')))) {",
+              "final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode(body));": "final response = await _post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode(body), timeout: _textToImageTimeout, stage: '文生图');",
+              "final response = await http.Response.fromStream(await request.send());": "final streamedResponse = await _send(request, timeout: _imageToImageTimeout, stage: '图生图 / 图片编辑');\n    final response = await _withTimeout(http.Response.fromStream(streamedResponse), _imageToImageTimeout, '读取图生图 / 图片编辑响应');",
+              "final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'}, _imageContentMessage('user', instruction, null, base64Images: images)], 'stream': false}));": "final response = await _post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'}, _imageContentMessage('user', instruction, null, base64Images: images)], 'stream': false}), timeout: images.isEmpty ? _textToImageTimeout : _imageToImageTimeout, stage: title);",
+          }
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+          api.write_text(s)
+
+          home = Path('lib/screens/home_screen.dart')
+          h = home.read_text()
+          if "final _inputFocus = FocusNode();" not in h:
+              h = h.replace("final _input = TextEditingController();\n", "final _input = TextEditingController();\n  final _inputFocus = FocusNode();\n")
+              h = h.replace("_input.dispose();\n    _scroll.dispose();", "_input.dispose();\n    _inputFocus.dispose();\n    _scroll.dispose();")
+          if "_markLastGeneratingAsFailed" not in h:
+              h = h.replace("    } catch (e) {\n      _snack('发送失败：$e');\n    } finally {", "    } catch (e) {\n      _markLastGeneratingAsFailed('发送失败：$e');\n      _snack('发送失败：$e');\n    } finally {")
+              h = h.replace("  Future<void> _replyAuto", "  void _markLastGeneratingAsFailed(String message) {\n    if (!mounted) return;\n    final index = _messages.lastIndexWhere((m) => m.role == 'assistant' && m.isGenerating);\n    if (index < 0) return;\n    setState(() {\n      final old = _messages[index];\n      _messages[index] = Message(id: old.id, role: 'assistant', content: message, isGenerating: false);\n    });\n  }\n\n  Future<void> _replyAuto")
+          old = "      finalPrompt = await _api.refineImagePrompt(\n        userText: prompt,\n        base64Image: null,\n        base64Images: base64Images,\n        apiKey: _apiKey,\n        baseUrl: _baseUrl,\n        model: _chatModel,\n        aspectRatio: _imageAspectRatio,\n        size: _selectedSize,\n        quality: quality,\n        isEdit: imageFiles.isNotEmpty,\n      );"
+          new = "      try {\n        finalPrompt = await _api.refineImagePrompt(\n          userText: prompt,\n          base64Image: null,\n          base64Images: base64Images,\n          apiKey: _apiKey,\n          baseUrl: _baseUrl,\n          model: _chatModel,\n          aspectRatio: _imageAspectRatio,\n          size: _selectedSize,\n          quality: quality,\n          isEdit: imageFiles.isNotEmpty,\n        );\n      } catch (e) {\n        finalPrompt = prompt;\n        if (mounted) {\n          _snack('提示词润色失败，已使用原始提示词继续生成。');\n          setState(() => placeholder.content = '提示词润色失败，已使用原始提示词继续生成…');\n        }\n      }"
+          h = h.replace(old, new)
+          h = h.replace("'正在生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…'", "'正在生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面，图片生成可能需要数分钟…'")
+          h = h.replace("'正在参考 ${imageFiles.length} 张图生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…'", "'正在参考 ${imageFiles.length} 张图生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面，图片生成可能需要数分钟…'")
+          if "final keyboard = MediaQuery.viewInsetsOf(context).bottom;" not in h:
+              h = h.replace("  Widget build(BuildContext context) => Scaffold(\n        backgroundColor: _bg,", "  Widget build(BuildContext context) {\n    final keyboard = MediaQuery.viewInsetsOf(context).bottom;\n    return Scaffold(\n      resizeToAvoidBottomInset: false,\n      backgroundColor: _bg,")
+              h = h.replace("              _composer(),\n            ]),", "              AnimatedPadding(\n                duration: const Duration(milliseconds: 180),\n                curve: Curves.easeOutCubic,\n                padding: EdgeInsets.only(bottom: keyboard),\n                child: _composer(),\n              ),\n            ]),")
+              h = h.replace("        ),\n      );\n\n  Widget _studioHeader()", "        ),\n      );\n  }\n\n  Widget _studioHeader()")
+          if "focusNode: _inputFocus" not in h:
+              h = h.replace("TextField(controller: _input, minLines: 1, maxLines: 5,", "TextField(controller: _input, focusNode: _inputFocus, minLines: 1, maxLines: 5, keyboardType: TextInputType.multiline, textInputAction: TextInputAction.newline,")
+          if "isScrollControlled: true" not in h:
+              h = h.replace("showModalBottomSheet<void>(\n      context: context,", "showModalBottomSheet<void>(\n      context: context,\n      isScrollControlled: true,")
+              h = h.replace("MediaQuery.of(ctx).padding.bottom + 18", "MediaQuery.of(ctx).viewInsets.bottom + MediaQuery.of(ctx).padding.bottom + 18")
+          home.write_text(h)
+          PY
+
+      - name: Verify patch markers
+        run: |
+          grep -q "_textToImageTimeout" lib/services/api_service.dart
+          grep -q "MediaQuery.viewInsetsOf" lib/screens/home_screen.dart
+          grep -q "提示词润色失败，已使用原始提示词继续生成" lib/screens/home_screen.dart
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/services/api_service.dart lib/screens/home_screen.dart
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+          else
+            git commit -m "fix: improve image timeouts and keyboard handling"
+            git push
+          fi
