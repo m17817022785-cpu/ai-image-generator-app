@@ -50,6 +50,86 @@ jobs:
           flutter-version: '3.22.2'
           cache: true
 
+      - name: Patch studio header collapsed by default
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('lib/screens/home_screen.dart')
+          s = p.read_text(encoding='utf-8')
+
+          if 'bool _studioHeaderCollapsed = true;' not in s:
+              s = s.replace('  bool _enhanceImagePrompt = true;\n', '  bool _enhanceImagePrompt = true;\n  bool _studioHeaderCollapsed = true;\n')
+
+          old_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n      });"
+          new_load = "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        // 默认收起对话上方的创作模式面板，用户仍可点箭头展开。\n        _studioHeaderCollapsed = true;\n      });"
+          if new_load not in s and old_load in s:
+              s = s.replace(old_load, new_load)
+
+          if '_studioHeaderCollapsed ? _compactStudioHeader() : _studioHeader()' not in s:
+              s = s.replace('SafeArea(top: false, child: Column(children: [_studioHeader(),', 'SafeArea(top: false, child: Column(children: [_studioHeaderCollapsed ? _compactStudioHeader() : _studioHeader(),')
+
+          old_chip = '            _statusChip(),\n          ]),'
+          new_chip = '''            _statusChip(),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: '收起面板',
+              onPressed: () => setState(() => _studioHeaderCollapsed = true),
+              icon: const Icon(Icons.keyboard_arrow_up_rounded, color: _muted),
+              style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.58), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+            ),
+          ]),'''
+          if "tooltip: '收起面板'" not in s and old_chip in s:
+              s = s.replace(old_chip, new_chip)
+
+          marker = '  Widget _statusChip() => InkWell('
+          compact = r'''
+  Widget _compactStudioHeader() => _glassPanel(
+        margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        radius: 22,
+        child: Row(children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: const LinearGradient(colors: [_primary, _primary2])),
+            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(_forceImage ? '生图模式' : '智能模式', style: const TextStyle(color: _text, fontSize: 14, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}', overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+          IconButton(
+            tooltip: '图片参数',
+            onPressed: _openImageParams,
+            icon: const Icon(Icons.tune_rounded, color: _primary),
+            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: '展开面板',
+            onPressed: () => setState(() => _studioHeaderCollapsed = false),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _muted),
+            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(.60), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+          ),
+        ]),
+      );
+
+'''
+          if '_compactStudioHeader() =>' not in s and marker in s:
+              s = s.replace(marker, compact + marker)
+
+          p.write_text(s, encoding='utf-8')
+
+          pub = Path('pubspec.yaml')
+          ps = pub.read_text(encoding='utf-8').replace('version: 1.2.2+85', 'version: 1.2.3+86')
+          pub.write_text(ps, encoding='utf-8')
+          PY
+
       - name: Get dependencies
         run: flutter pub get
 
@@ -59,8 +139,6 @@ jobs:
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
           PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
-          # Use GitHub run number as versionCode in CI so every APK can upgrade the previous one.
-          # Keep pubspec build number only as local/manual fallback.
           BUILD_NUMBER=${GITHUB_RUN_NUMBER:-$PUBSPEC_BUILD_NUMBER}
           if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
             BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
