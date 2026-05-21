@@ -1,0 +1,48 @@
+name: Fix API Images Variable
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix_api_images_variable.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Insert missing images variable
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/services/api_service.dart')
+          s = p.read_text(encoding='utf-8')
+          sig = '  Future<String> _callChatStyleImageTool('
+          start = s.index(sig)
+          end = s.index('  String _extractImageResultFlexible', start)
+          block = s[start:end]
+          needle = 'final images = _effectiveImages(base64Image, base64Images);'
+          if needle not in block:
+              marker = "    final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();\n"
+              if marker not in block:
+                  raise SystemExit('marker not found in _callChatStyleImageTool')
+              block = block.replace(marker, marker + '    ' + needle + '\n', 1)
+              s = s[:start] + block + s[end:]
+              p.write_text(s, encoding='utf-8')
+          else:
+              print('images variable already present')
+          PY
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- lib/services/api_service.dart; then
+            echo "No changes to commit"
+          else
+            git add lib/services/api_service.dart
+            git commit -m "fix: define images in chat style image tool"
+            git push
+          fi
