@@ -48,11 +48,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _apiKey = '';
   String _imageApiKey = '';
-  String _baseUrl = 'https://api.openai.com/v1';
+  String _baseUrl = '';
   String _imageBaseUrl = '';
-  String _chatModel = 'gpt-4o-mini';
-  String _imageModel = 'dall-e-3';
-  String _imageEditModel = 'gpt-image-1';
+  String _chatModel = '';
+  String _imageModel = '';
+  String _imageEditModel = '';
   String _imageAspectRatio = '1:1';
   String _imageQuality = 'auto';
 
@@ -102,11 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _apiKey = s['apiKey'] ?? '';
         _imageApiKey = s['imageApiKey'] ?? '';
-        _baseUrl = s['baseUrl'] ?? 'https://api.openai.com/v1';
+        _baseUrl = s['baseUrl'] ?? '';
         _imageBaseUrl = s['imageBaseUrl'] ?? '';
-        _chatModel = s['chatModel'] ?? 'gpt-4o-mini';
-        _imageModel = s['imageModel'] ?? 'dall-e-3';
-        _imageEditModel = s['imageEditModel'] ?? 'gpt-image-1';
+        _chatModel = s['chatModel'] ?? '';
+        _imageModel = s['imageModel'] ?? '';
+        _imageEditModel = s['imageEditModel'] ?? '';
         _imageAspectRatio = _aspectOptions.contains(s['imageAspectRatio']) ? s['imageAspectRatio']! : '1:1';
         _imageQuality = _qualityOptions.contains(s['imageQuality']) ? s['imageQuality']! : 'auto';
         _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';
@@ -367,6 +367,67 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _smallButton(IconData icon, VoidCallback? onTap, Color color) => InkWell(onTap: onTap, borderRadius: BorderRadius.circular(17), child: Container(width: 46, height: 46, decoration: BoxDecoration(gradient: onTap == null ? null : LinearGradient(colors: [color, color == _primary ? _primary2 : color.withOpacity(.78)]), color: onTap == null ? Colors.grey.shade300 : null, borderRadius: BorderRadius.circular(17), boxShadow: onTap == null ? null : [BoxShadow(color: color.withOpacity(.22), blurRadius: 14, offset: const Offset(0, 7))]), child: Icon(icon, color: Colors.white)));
 
   Widget _glassPanel({required EdgeInsets margin, required EdgeInsets padding, required double radius, required Widget child}) => ClipRRect(borderRadius: BorderRadius.circular(radius), child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16), child: Container(margin: margin, padding: padding, decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(radius), border: Border.all(color: Colors.white.withOpacity(.72), width: 1.4), boxShadow: [BoxShadow(color: _primary.withOpacity(0.13), blurRadius: 26, offset: const Offset(0, 12))]), child: child)));
+
+  Future<void> _fetchAndFillModel({
+    required TextEditingController key,
+    required TextEditingController base,
+    required TextEditingController target,
+    required String title,
+    TextEditingController? imageKey,
+    TextEditingController? imageBase,
+    bool useImageProvider = false,
+  }) async {
+    final apiKey = useImageProvider && (imageKey?.text.trim().isNotEmpty ?? false) ? imageKey!.text.trim() : key.text.trim();
+    final baseUrl = useImageProvider && (imageBase?.text.trim().isNotEmpty ?? false) ? imageBase!.text.trim() : base.text.trim();
+    if (baseUrl.isEmpty) {
+      _snack('请先填写 Base URL，再获取模型。');
+      return;
+    }
+    try {
+      _snack('正在获取服务商模型…');
+      final models = await _api.fetchModels(apiKey: apiKey, baseUrl: baseUrl);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (ctx) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          child: Container(
+            height: MediaQuery.of(ctx).size.height * .72,
+            padding: EdgeInsets.fromLTRB(16, 14, 16, MediaQuery.of(ctx).padding.bottom + 16),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(.96), borderRadius: const BorderRadius.vertical(top: Radius.circular(28))),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Center(child: Container(width: 46, height: 5, decoration: BoxDecoration(color: _line, borderRadius: BorderRadius.circular(99)))),
+              const SizedBox(height: 14),
+              Text(title, style: const TextStyle(color: _text, fontSize: 20, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text('共获取到 ${models.length} 个模型，点击一个模型回填到输入框。', style: const TextStyle(color: _muted, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: models.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1, color: _line),
+                  itemBuilder: (_, i) => ListTile(
+                    dense: true,
+                    title: Text(models[i], style: const TextStyle(color: _text, fontWeight: FontWeight.w800)),
+                    trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
+                    onTap: () => Navigator.pop(ctx, models[i]),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+      if (selected != null && selected.trim().isNotEmpty) {
+        target.text = selected.trim();
+        _snack('已选择模型：${selected.trim()}');
+      }
+    } catch (e) {
+      _snack('获取模型失败：$e');
+    }
+  }
 
   Future<void> _openSettings() async {
     final key = TextEditingController(text: _apiKey);
