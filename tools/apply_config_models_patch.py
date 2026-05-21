@@ -1,55 +1,36 @@
 from pathlib import Path
 
+HOME = Path('lib/screens/home_screen.dart')
+text = HOME.read_text(encoding='utf-8')
 
-def replace(path: str, old: str, new: str) -> None:
-    p = Path(path)
-    text = p.read_text(encoding='utf-8')
+
+def patch(old: str, new: str, name: str) -> None:
+    global text
     if new in text:
+        print(f'already patched: {name}')
         return
     if old not in text:
-        raise SystemExit(f'Pattern not found in {path}: {old[:120]!r}')
-    p.write_text(text.replace(old, new), encoding='utf-8')
+        print(f'skip missing pattern: {name}')
+        return
+    text = text.replace(old, new)
+    print(f'patched: {name}')
 
-
-# Settings: do not prefill config defaults in saved settings UI.
-replace(
-    'lib/services/settings_service.dart',
-    "    await prefs.setString(_keyImageEditModel, (imageEditModel ?? 'gpt-image-1').trim());",
-    "    await prefs.setString(_keyImageEditModel, (imageEditModel ?? '').trim());",
-)
-replace(
-    'lib/services/settings_service.dart',
-    "    final baseUrl = prefs.getString(_keyBaseUrl) ?? 'https://api.openai.com/v1';",
-    "    final baseUrl = prefs.getString(_keyBaseUrl) ?? '';",
-)
-replace(
-    'lib/services/settings_service.dart',
-    "      'chatModel': prefs.getString(_keyChatModel) ?? 'gpt-4o-mini',\n      'imageModel': prefs.getString(_keyImageModel) ?? 'dall-e-3',\n      'imageEditModel': prefs.getString(_keyImageEditModel) ?? 'gpt-image-1',",
-    "      'chatModel': prefs.getString(_keyChatModel) ?? '',\n      'imageModel': prefs.getString(_keyImageModel) ?? '',\n      'imageEditModel': prefs.getString(_keyImageEditModel) ?? '',",
-)
-
-# ApiService: add OpenAI-compatible /models fetch support.
-replace(
-    'lib/services/api_service.dart',
-    "  bool _useChatImageEndpoint(String baseUrl) {\n    final path = Uri.tryParse(_normalizeBaseUrl(baseUrl))?.path.toLowerCase() ?? '';\n    return path == '/chat' || path.endsWith('/chat/completions') || path.endsWith('/completions');\n  }\n\n  String normalizeChatModel(String model) {",
-    "  Uri _modelsEndpoint(String baseUrl) {\n    var normalized = _normalizeBaseUrl(baseUrl);\n    final uri = Uri.tryParse(normalized);\n    final path = (uri?.path ?? '').toLowerCase();\n    const suffixes = ['/chat/completions', '/completions', '/images/generations', '/images/edits', '/chat'];\n    for (final suffix in suffixes) {\n      if (path == suffix || path.endsWith(suffix)) {\n        normalized = normalized.substring(0, normalized.length - suffix.length);\n        break;\n      }\n    }\n    while (normalized.endsWith('/')) {\n      normalized = normalized.substring(0, normalized.length - 1);\n    }\n    return Uri.parse('$normalized/models');\n  }\n\n  bool _useChatImageEndpoint(String baseUrl) {\n    final path = Uri.tryParse(_normalizeBaseUrl(baseUrl))?.path.toLowerCase() ?? '';\n    return path == '/chat' || path.endsWith('/chat/completions') || path.endsWith('/completions');\n  }\n\n  Future<List<String>> fetchModels({required String apiKey, required String baseUrl}) async {\n    final url = _modelsEndpoint(baseUrl);\n    _log.info('models', '开始获取服务商模型', 'GET /models', details: {'endpoint': url.toString()});\n    final response = await http.get(url, headers: {'Accept': 'application/json', if (apiKey.trim().isNotEmpty) 'Authorization': 'Bearer ${apiKey.trim()}'});\n    final bodyText = utf8.decode(response.bodyBytes);\n    if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('获取模型失败 ${response.statusCode}: ${_extractError(bodyText)}');\n    final parsed = _decodeJsonObject(bodyText, category: 'models', title: '获取服务商模型响应解析失败', endpoint: url.toString(), model: '', statusCode: response.statusCode);\n    final rawModels = parsed['data'];\n    final models = <String>[];\n    if (rawModels is List) {\n      for (final item in rawModels) {\n        if (item is Map && item['id'] != null) models.add(item['id'].toString());\n        if (item is String) models.add(item);\n      }\n    } else if (parsed['models'] is List) {\n      for (final item in parsed['models'] as List) {\n        if (item is Map && item['id'] != null) models.add(item['id'].toString());\n        if (item is String) models.add(item);\n      }\n    }\n    final unique = models.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();\n    if (unique.isEmpty) throw Exception('服务商没有返回可识别的模型列表。Endpoint: $url');\n    _log.success('models', '服务商模型获取完成', '${unique.length} models', details: {'endpoint': url.toString(), 'models': unique});\n    return unique;\n  }\n\n  String normalizeChatModel(String model) {",
-)
-
-# HomeScreen: keep config fields blank until user fills them.
-replace(
-    'lib/screens/home_screen.dart',
+patch(
     "  String _baseUrl = 'https://api.openai.com/v1';\n  String _imageBaseUrl = '';\n  String _chatModel = 'gpt-4o-mini';\n  String _imageModel = 'dall-e-3';\n  String _imageEditModel = 'gpt-image-1';",
     "  String _baseUrl = '';\n  String _imageBaseUrl = '';\n  String _chatModel = '';\n  String _imageModel = '';\n  String _imageEditModel = '';",
+    'blank default fields',
 )
-replace(
-    'lib/screens/home_screen.dart',
+
+patch(
     "        _baseUrl = s['baseUrl'] ?? 'https://api.openai.com/v1';\n        _imageBaseUrl = s['imageBaseUrl'] ?? '';\n        _chatModel = s['chatModel'] ?? 'gpt-4o-mini';\n        _imageModel = s['imageModel'] ?? 'dall-e-3';\n        _imageEditModel = s['imageEditModel'] ?? 'gpt-image-1';",
     "        _baseUrl = s['baseUrl'] ?? '';\n        _imageBaseUrl = s['imageBaseUrl'] ?? '';\n        _chatModel = s['chatModel'] ?? '';\n        _imageModel = s['imageModel'] ?? '';\n        _imageEditModel = s['imageEditModel'] ?? '';",
+    'blank loaded defaults',
 )
-replace(
-    'lib/screens/home_screen.dart',
+
+patch(
     "                  _baseUrl = base.text.trim().isEmpty ? 'https://api.openai.com/v1' : base.text.trim();\n                  _imageBaseUrl = imageBase.text.trim();\n                  _chatModel = chat.text.trim().isEmpty ? 'gpt-4o-mini' : chat.text.trim();\n                  _imageModel = _api.normalizeImageModel(image.text.trim().isEmpty ? 'dall-e-3' : image.text.trim());\n                  _imageEditModel = _api.normalizeImageEditModel(edit.text.trim().isEmpty ? 'gpt-image-1' : edit.text.trim());",
     "                  _baseUrl = base.text.trim();\n                  _imageBaseUrl = imageBase.text.trim();\n                  _chatModel = chat.text.trim();\n                  _imageModel = image.text.trim();\n                  _imageEditModel = edit.text.trim();",
+    'save exact user fields',
 )
 
 fetch_fn = """  Future<void> _fetchAndFillModel({
@@ -114,14 +95,14 @@ fetch_fn = """  Future<void> _fetchAndFillModel({
   }
 
 """
-replace(
-    'lib/screens/home_screen.dart',
+
+patch(
     "  Future<void> _openSettings() async {\n    final key = TextEditingController(text: _apiKey);",
     fetch_fn + "  Future<void> _openSettings() async {\n    final key = TextEditingController(text: _apiKey);",
+    'insert fetch model helper',
 )
 
-replace(
-    'lib/screens/home_screen.dart',
+patch(
     "          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [_field(key, '聊天 API Key'), _field(base, '聊天 Base URL'), _field(chat, '聊天模型'), _field(imageKey, '图片 API Key（可留空）'), _field(imageBase, '图片 Base URL（可留空）'), _field(image, '文生图模型'), _field(edit, '图生图模型')])),",
     """          content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -158,6 +139,8 @@ replace(
               ),
             ]),
           ),""",
+    'expand settings dialog model buttons',
 )
 
-print('Config/model patch applied.')
+HOME.write_text(text, encoding='utf-8')
+print('Config model home patch applied idempotently.')
