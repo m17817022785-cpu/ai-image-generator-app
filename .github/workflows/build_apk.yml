@@ -33,15 +33,16 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Cache Android debug keystore for stable fallback signing
+      - name: Cache stable Android fallback keystore
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: android-debug-keystore-v1
 
-      - name: Ensure Android debug keystore exists
+      - name: Ensure stable Android fallback keystore exists
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p ~/.android
           if [ ! -f ~/.android/debug.keystore ]; then
             keytool -genkeypair \
@@ -58,6 +59,7 @@ jobs:
           else
             echo "Using cached fallback debug keystore."
           fi
+          echo "Keystore certificate fingerprint:"
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'SHA1:|SHA256:' || true
 
       - name: Setup Flutter
@@ -73,12 +75,18 @@ jobs:
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos
 
-      - name: Build release APK
+      - name: Build release APK with explicit stable signing
         shell: bash
+        env:
+          ANDROID_KEYSTORE_PATH: /home/runner/.android/debug.keystore
+          ANDROID_KEYSTORE_PASSWORD: android
+          ANDROID_KEY_ALIAS: androiddebugkey
+          ANDROID_KEY_PASSWORD: android
         run: |
+          set -euo pipefail
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
-          PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
+          PUBSPEC_BUILD_NUMBER=${APP_VERSION##*+}
           RUN_NUMBER=${GITHUB_RUN_NUMBER:-0}
 
           if ! [[ "$PUBSPEC_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
@@ -95,7 +103,19 @@ jobs:
           fi
 
           echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=$RUN_NUMBER"
+          echo "Using explicit release keystore: $ANDROID_KEYSTORE_PATH"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Verify APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          echo "APK: $APK"
+          ls -lh "$APK"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+          "$APKSIGNER" verify --print-certs "$APK"
 
       - name: Collect APK
         run: |
