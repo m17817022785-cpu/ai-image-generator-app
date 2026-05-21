@@ -2,12 +2,14 @@ enum MessageType { text, image }
 
 class Message {
   final String id;
-  final String role; // 'user', 'assistant', 'system'
-  String content; // 流式更新需要可变
+  final String role;
+  String content;
   final MessageType type;
-  final String? localFilePath; // 关联的上传文件本地路径
-  final String? base64Image; // 上传图片的 base64 编码，用于多模态
-  bool isGenerating; // 是否正在处于打字机流式生成状态
+  final String? localFilePath;
+  final String? base64Image;
+  final List<String> localFilePaths;
+  final List<String> base64Images;
+  bool isGenerating;
   final DateTime timestamp;
 
   Message({
@@ -17,34 +19,37 @@ class Message {
     this.type = MessageType.text,
     this.localFilePath,
     this.base64Image,
+    List<String>? localFilePaths,
+    List<String>? base64Images,
     this.isGenerating = false,
     DateTime? timestamp,
-  }) : this.timestamp = timestamp ?? DateTime.now();
+  })  : localFilePaths = localFilePaths ?? (localFilePath == null ? const <String>[] : <String>[localFilePath]),
+        base64Images = base64Images ?? (base64Image == null ? const <String>[] : <String>[base64Image]),
+        timestamp = timestamp ?? DateTime.now();
 
-  // 转换成 OpenAI API 标准的消息格式
+  List<String> get effectiveLocalFilePaths {
+    if (localFilePaths.isNotEmpty) return localFilePaths.where((e) => e.trim().isNotEmpty).toList();
+    final single = localFilePath;
+    return single == null || single.trim().isEmpty ? const <String>[] : <String>[single];
+  }
+
+  List<String> get effectiveBase64Images {
+    if (base64Images.isNotEmpty) return base64Images.where((e) => e.trim().isNotEmpty).toList();
+    final single = base64Image;
+    return single == null || single.trim().isEmpty ? const <String>[] : <String>[single];
+  }
+
   Map<String, dynamic> toOpenAiMap() {
-    if (base64Image != null && base64Image!.isNotEmpty) {
-      // OpenAI 多模态消息格式
+    final images = effectiveBase64Images;
+    if (images.isNotEmpty) {
       return {
         'role': role,
         'content': [
-          {
-            'type': 'text',
-            'text': content.isNotEmpty ? content : '分析这张图片'
-          },
-          {
-            'type': 'image_url',
-            'image_url': {
-              'url': 'data:image/jpeg;base64,$base64Image'
-            }
-          }
+          {'type': 'text', 'text': content.isNotEmpty ? content : (images.length > 1 ? '分析这些图片' : '分析这张图片')},
+          ...images.map((image) => {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,$image'}}),
         ]
       };
     }
-    // 普通文本消息格式
-    return {
-      'role': role,
-      'content': content,
-    };
+    return {'role': role, 'content': content};
   }
 }
