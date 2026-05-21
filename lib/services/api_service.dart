@@ -426,6 +426,7 @@ JSON：{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图�
   Future<String> _callChatStyleImageTool({required String prompt, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model, required String size, String quality = 'auto', required String category, required String title}) async {
     final url = _endpoint(baseUrl, '/chat/completions');
     final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();
+    final images = _effectiveImages(base64Image, base64Images);
     final instruction = base64Image != null && base64Image.isNotEmpty ? '$prompt\n\n请根据上传图片进行生成/编辑，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。' : '$prompt\n\n请生成图片，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。';
     final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'}, _imageContentMessage('user', instruction, null, base64Images: images)], 'stream': false}));
     final bodyText = utf8.decode(response.bodyBytes);
