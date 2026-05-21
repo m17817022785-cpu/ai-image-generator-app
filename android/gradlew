@@ -5,8 +5,8 @@
 set -eu
 
 APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-GRADLE_VERSION="7.6.3"
-GRADLE_DIST="gradle-${GRADLE_VERSION}-bin.zip"
+GRADLE_VERSION="8.4"
+GRADLE_DIST="gradle-${GRADLE_VERSION}-all.zip"
 GRADLE_URL="https://services.gradle.org/distributions/${GRADLE_DIST}"
 GRADLE_CACHE_DIR="${HOME}/.gradle/wrapper-cache"
 GRADLE_HOME="${GRADLE_CACHE_DIR}/gradle-${GRADLE_VERSION}"
@@ -22,6 +22,7 @@ if [ ! -x "${GRADLE_BIN}" ]; then
   fi
 
   echo "Installing Gradle..."
+  rm -rf "${GRADLE_HOME}"
   unzip -q "${TMP_ZIP}" -d "${GRADLE_CACHE_DIR}"
   chmod +x "${GRADLE_BIN}"
 fi
