@@ -1,0 +1,102 @@
+name: Repair Build Timeout Keyboard
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    name: Repair project files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply repairs
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def write_if_changed(path, text):
+              p = Path(path)
+              old = p.read_text(encoding='utf-8') if p.exists() else ''
+              if old != text:
+                  p.write_text(text, encoding='utf-8')
+                  print(f'changed {path}')
+              else:
+                  print(f'unchanged {path}')
+
+          # ---- Android build stability: AGP/Kotlin/Gradle compatible with modern AndroidX and SDK 35 ----
+          settings = Path('android/settings.gradle').read_text(encoding='utf-8')
+          settings = re.sub(r'id "com\.android\.application" version "[^"]+" apply false', 'id "com.android.application" version "8.3.2" apply false', settings)
+          settings = re.sub(r'id "org\.jetbrains\.kotlin\.android" version "[^"]+" apply false', 'id "org.jetbrains.kotlin.android" version "1.9.24" apply false', settings)
+          write_if_changed('android/settings.gradle', settings)
+
+          root = Path('android/build.gradle').read_text(encoding='utf-8')
+          root = re.sub(r"ext\.kotlin_version\s*=\s*'[^']+'", "ext.kotlin_version = '1.9.24'", root)
+          root = re.sub(r"classpath 'com\.android\.tools\.build:gradle:[^']+'", "classpath 'com.android.tools.build:gradle:8.3.2'", root)
+          root = re.sub(r'compileSdkVersion\s*:\s*\d+', 'compileSdkVersion: 35', root)
+          root = re.sub(r'targetSdkVersion\s*:\s*\d+', 'targetSdkVersion: 35', root)
+          root = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 35', root)
+          write_if_changed('android/build.gradle', root)
+
+          app = Path('android/app/build.gradle').read_text(encoding='utf-8')
+          app = app.replace('compileSdkVersion flutter.compileSdkVersion', 'compileSdkVersion 35')
+          app = app.replace('targetSdkVersion flutter.targetSdkVersion', 'targetSdkVersion 35')
+          app = app.replace('id "kotlin-android"', 'id "org.jetbrains.kotlin.android"')
+          write_if_changed('android/app/build.gradle', app)
+
+          wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
+          if wrapper.exists():
+              w = wrapper.read_text(encoding='utf-8')
+              w = re.sub(r'gradle-[0-9.]+-(bin|all)\.zip', 'gradle-8.4-all.zip', w)
+              write_if_changed(wrapper, w)
+
+          # ---- API timeout repairs ----
+          api_path = Path('lib/services/api_service.dart')
+          api = api_path.read_text(encoding='utf-8')
+          if '_textToImageTimeout' not in api:
+              api = api.replace('class ApiService {\n', "class ApiService {\n  static const Duration _chatTimeout = Duration(seconds: 90);\n  static const Duration _promptRefineTimeout = Duration(seconds: 75);\n  static const Duration _textToImageTimeout = Duration(minutes: 6);\n  static const Duration _imageEditTimeout = Duration(minutes: 8);\n")
+          # Add long timeouts to image generation/edit HTTP calls while keeping normal chat responsive.
+          api = re.sub(r"await http\.post\((url, headers: \{'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer \$\{apiKey\.trim\(\)\}'\}, body: jsonEncode\(body\)\)\)", r"await http.post(\1).timeout(_textToImageTimeout)", api, count=1)
+          api = re.sub(r"await http\.post\((url, headers: \{'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer \$\{apiKey\.trim\(\)\}'\}, body: jsonEncode\(\{'model': actualModel, 'messages': \[\{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'\}, _imageContentMessage\('user', instruction, null, base64Images: images\)\], 'stream': false\}\)\)\)", r"await http.post(\1).timeout(_textToImageTimeout)", api, count=1)
+          api = re.sub(r"await http\.Response\.fromStream\(await request\.send\(\)\)", r"await http.Response.fromStream(await request.send().timeout(_imageEditTimeout))", api)
+          # Prompt refine and tool/chat requests get bounded timeouts.
+          api = re.sub(r"await http\.post\((url, headers: \{'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer \$\{apiKey\.trim\(\)\}'\}, body: jsonEncode\(\{'model': actualModel, 'messages': \[\{'role': 'system', 'content': systemPrompt\}, _imageContentMessage\('user', userInstruction, null, base64Images: _effectiveImages\(base64Image, base64Images\)\)\], 'stream': false\}\)\)\)", r"await http.post(\1).timeout(_promptRefineTimeout)", api, count=1)
+          api = re.sub(r"await http\.post\((url, headers: \{'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer \$\{apiKey\.trim\(\)\}'\}, body: jsonEncode\(\{'model': actualModel, 'messages': \[\{'role': 'system', 'content': systemPrompt\}, _imageContentMessage\('user', userText\.isEmpty \? '请根据上传图片继续处理' : userText, base64Image\)\], 'stream': false\}\)\)\)", r"await http.post(\1).timeout(_chatTimeout)", api, count=1)
+          write_if_changed(api_path, api)
+
+          # ---- Home screen: keyboard avoidance and prompt-refine fallback ----
+          home_path = Path('lib/screens/home_screen.dart')
+          home = home_path.read_text(encoding='utf-8')
+          if 'MediaQuery.viewInsetsOf(context).bottom' not in home:
+              old = "body: Container(\n        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bgA, _bgB, _bgC])),\n        child: Stack(children: ["
+              new = "body: Container(\n        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bgA, _bgB, _bgC])),\n        child: AnimatedPadding(\n          duration: const Duration(milliseconds: 180),\n          curve: Curves.easeOutCubic,\n          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),\n          child: Stack(children: ["
+              if old in home:
+                  home = home.replace(old, new)
+                  home = home.replace("        ]),\n      ),\n    );\n  }\n", "          ]),\n        ),\n      ),\n    );\n  }\n", 1)
+          refine_call = "finalPrompt = await _api.refineImagePrompt(userText: prompt, base64Image: null, base64Images: base64Images, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel, aspectRatio: _imageAspectRatio, size: _selectedSize, quality: quality, isEdit: imageFiles.isNotEmpty);"
+          if refine_call in home and '提示词润色失败，已使用原始提示词继续生成' not in home:
+              fallback = "try {\n        finalPrompt = await _api.refineImagePrompt(userText: prompt, base64Image: null, base64Images: base64Images, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel, aspectRatio: _imageAspectRatio, size: _selectedSize, quality: quality, isEdit: imageFiles.isNotEmpty);\n      } catch (e) {\n        _log.warning('prompt_refine', '提示词润色失败，继续生成', e.toString());\n        if (mounted) _snack('提示词润色失败，已使用原始提示词继续生成');\n        finalPrompt = prompt;\n      }"
+              home = home.replace(refine_call, fallback)
+          write_if_changed(home_path, home)
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status --short
+          if [ -n "$(git status --porcelain)" ]; then
+            git add android lib .github/workflows/repair_build_timeout_keyboard.yml
+            git commit -m "fix: repair android build timeout keyboard flow"
+            git push
+          else
+            echo "No changes to commit"
+          fi
