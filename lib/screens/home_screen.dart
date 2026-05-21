@@ -239,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _saveImage(String url) async {
     try {
       _snack('正在保存图片…');
-      await ImageSaveService.saveNetworkImage(url);
+      await ImageSaveService.saveImage(url);
       _snack('图片已保存到相册');
     } catch (e) {
       _snack('保存失败：$e');
