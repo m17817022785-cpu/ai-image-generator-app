@@ -1,25 +1,22 @@
 buildscript {
-    ext.kotlin_version = '1.8.22'
+    ext.kotlin_version = '1.9.24'
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.3.0'
+        classpath 'com.android.tools.build:gradle:8.3.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
 
 // Compatibility shim for older Flutter plugins that still read
 // rootProject.ext.flutter.compileSdkVersion/minSdkVersion/targetSdkVersion.
-// The Flutter Gradle plugin exposes these values to the app module, but some
-// third-party plugin Gradle scripts (for example gal 2.x) evaluate before that
-// extension is available on their own project.
 ext.flutter = [
-    compileSdkVersion: 34,
+    compileSdkVersion: 35,
     minSdkVersion    : 21,
-    targetSdkVersion : 34,
+    targetSdkVersion : 35,
     ndkVersion       : '25.1.8937393'
 ]
 
@@ -35,7 +32,7 @@ subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 
-// Provide fallback properties for plugins that expect them
+// Provide fallback properties for plugins that expect them.
 subprojects {
     afterEvaluate { project ->
         if (project.hasProperty('android')) {
@@ -44,7 +41,7 @@ subprojects {
                     namespace project.group
                 }
                 if (compileSdkVersion == null) {
-                    compileSdkVersion 34
+                    compileSdkVersion 35
                 }
             }
         }
