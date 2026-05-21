@@ -1,0 +1,75 @@
+name: Add Fetch Provider Models Buttons
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch settings dialog model fetch buttons
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/screens/home_screen.dart')
+          text = path.read_text(encoding='utf-8')
+          old = "children: [_field(key, '聊天 API Key'), _field(base, '聊天 Base URL'), _field(chat, '聊天模型'), _field(imageKey, '图片 API Key（可留空）'), _field(imageBase, '图片 Base URL（可留空）'), _field(image, '文生图模型'), _field(edit, '图生图模型')]"
+          new = """children: [
+            _field(key, '聊天 API Key'),
+            _field(base, '聊天 Base URL'),
+            _field(chat, '聊天模型'),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _fetchAndFillModel(key: key, base: base, target: chat, title: '选择聊天模型'),
+                icon: const Icon(Icons.cloud_sync_rounded),
+                label: const Text('获取聊天模型'),
+              ),
+            ),
+            _field(imageKey, '图片 API Key（可留空）'),
+            _field(imageBase, '图片 Base URL（可留空）'),
+            _field(image, '文生图模型'),
+            _field(edit, '图生图模型'),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _fetchAndFillModel(key: key, base: base, target: image, title: '选择文生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+                    icon: const Icon(Icons.image_search_rounded),
+                    label: const Text('获取文生图模型'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _fetchAndFillModel(key: key, base: base, target: edit, title: '选择图生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+                    icon: const Icon(Icons.auto_fix_high_rounded),
+                    label: const Text('获取图生图模型'),
+                  ),
+                ],
+              ),
+            ),
+          ]"""
+          if old not in text:
+              raise SystemExit('target settings children block not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify patch
+        run: |
+          grep -n "获取聊天模型\|获取文生图模型\|获取图生图模型" lib/screens/home_screen.dart
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/home_screen.dart
+          git commit -m "feat: add provider model fetch buttons in settings" || exit 0
+          git push
