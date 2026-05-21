@@ -1,0 +1,88 @@
+name: Fix Multi Image API Compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch api_service.dart
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('lib/services/api_service.dart')
+          text = path.read_text(encoding='utf-8')
+
+          start = text.index('  Map<String, dynamic> _imageContentMessage(')
+          end = text.index('  Future<ToolDecision> decideTool(', start)
+          new_fn = '''  Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image, {List<String>? base64Images}) {
+    final images = _effectiveImages(base64Image, base64Images);
+    if (images.isNotEmpty) {
+      return {
+        'role': role,
+        'content': [
+          {'type': 'text', 'text': text},
+          ...images.map((image) => {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,$image'}}),
+        ]
+      };
+    }
+    return {'role': role, 'content': text};
+  }
+
+'''
+          text = text[:start] + new_fn + text[end:]
+
+          old = """    final actualModel = normalizeChatModel(model);
+    final hasImage = base64Image != null && base64Image.isNotEmpty;
+"""
+          new = """    final actualModel = normalizeChatModel(model);
+    final images = _effectiveImages(base64Image, base64Images);
+    final hasImage = images.isNotEmpty;
+"""
+          if old in text:
+            text = text.replace(old, new, 1)
+
+          old_call = """_imageContentMessage('user', userText.isEmpty ? '请根据上传图片继续处理' : userText, base64Image)"""
+          new_call = """_imageContentMessage('user', userText.isEmpty ? (images.length > 1 ? '请根据上传的多张图片继续处理' : '请根据上传图片继续处理') : userText, null, base64Images: images)"""
+          if old_call in text:
+            text = text.replace(old_call, new_call, 1)
+
+          sig = '  Future<String> _callChatStyleImageTool('
+          s = text.index(sig)
+          e = text.index('  String _extractImageResultFlexible', s)
+          block = text[s:e]
+          if 'final images = _effectiveImages(base64Image, base64Images);' not in block:
+            block = block.replace(
+              "    final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();\n",
+              "    final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();\n    final images = _effectiveImages(base64Image, base64Images);\n",
+              1,
+            )
+          block = block.replace(
+            "final instruction = base64Image != null && base64Image.isNotEmpty ? '$prompt\\n\\n请根据上传图片进行生成/编辑，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。' :",
+            "final instruction = images.isNotEmpty ? '$prompt\\n\\n请根据上传的${images.length}张参考图进行生成/编辑，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。' :",
+          )
+          text = text[:s] + block + text[e:]
+
+          block2 = text[text.index(sig):text.index('  String _extractImageResultFlexible', text.index(sig))]
+          if 'base64Images: images' in block2 and 'final images = _effectiveImages(base64Image, base64Images);' not in block2:
+            raise SystemExit('failed to insert images local variable in _callChatStyleImageTool')
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- lib/services/api_service.dart; then
+            echo "No api_service changes needed"
+          else
+            git add lib/services/api_service.dart
+            git commit -m "fix: repair multi image api compile support"
+            git push
+          fi
