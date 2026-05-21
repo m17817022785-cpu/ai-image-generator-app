@@ -31,6 +31,34 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+
+      - name: Cache Android debug keystore for stable fallback signing
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - name: Ensure Android debug keystore exists
+        shell: bash
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair \
+              -alias androiddebugkey \
+              -keypass android \
+              -storepass android \
+              -keystore ~/.android/debug.keystore \
+              -storetype JKS \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Created new fallback debug keystore. It will be cached for future builds."
+          else
+            echo "Using cached fallback debug keystore."
+          fi
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'SHA1:|SHA256:' || true
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -72,13 +100,13 @@ jobs:
       - name: Collect APK
         run: |
           mkdir -p artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk artifacts/Luna-AI-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/AI-Image-Generator-release.apk
           ls -lh artifacts
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Luna-AI-release-apk
-          path: artifacts/Luna-AI-release.apk
+          name: AI-Image-Generator-release-apk
+          path: artifacts/AI-Image-Generator-release.apk
           if-no-files-found: error
           retention-days: 30
