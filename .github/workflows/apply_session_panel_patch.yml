@@ -1,0 +1,194 @@
+name: Apply Session Panel Patch
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply_session_panel_patch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Patch HomeScreen session and panel controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/screens/home_screen.dart')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  print(f'skip {label}: marker not found')
+                  return False
+              text = text.replace(old, new, 1)
+              print(f'patched {label}')
+              return True
+
+          if 'bool _studioHeaderCollapsed' not in text:
+              replace_once(
+                  "  bool _loading = false;\n  bool _forceImage = false;\n  bool _enhanceImagePrompt = true;",
+                  "  bool _loading = false;\n  bool _forceImage = false;\n  bool _studioHeaderCollapsed = true;\n  bool _enhanceImagePrompt = true;",
+                  'state field',
+              )
+
+          if "_studioHeaderCollapsed = (s['studioHeaderCollapsed'] ?? 'true') == 'true';" not in text:
+              replace_once(
+                  "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        _imageCount = int.tryParse(s['imageCount'] ?? '1')?.clamp(1, 4).toInt() ?? 1;",
+                  "        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';\n        _studioHeaderCollapsed = (s['studioHeaderCollapsed'] ?? 'true') == 'true';\n        _imageCount = int.tryParse(s['imageCount'] ?? '1')?.clamp(1, 4).toInt() ?? 1;",
+                  'load collapsed state',
+              )
+
+          if 'studioHeaderCollapsed: _studioHeaderCollapsed,' not in text:
+              replace_once(
+                  "        enhanceImagePrompt: _enhanceImagePrompt,\n        imageCount: _imageCount,",
+                  "        enhanceImagePrompt: _enhanceImagePrompt,\n        imageCount: _imageCount,\n        studioHeaderCollapsed: _studioHeaderCollapsed,",
+                  'save collapsed state',
+              )
+
+          if 'Future<void> _confirmNewSession() async' not in text:
+              marker = "  Future<void> _pickImage() async {"
+              insert = '''
+  Future<void> _confirmNewSession() async {
+    if (_loading) {
+      _snack('正在发送中，请等待当前请求结束后再新建会话');
+      return;
+    }
+    if (_messages.isEmpty && _input.text.trim().isEmpty && _attachedFiles.isEmpty) {
+      _startNewSession();
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white.withOpacity(.96),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('开始新会话？', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+        content: const Text('当前聊天内容会从界面中清空，API 配置、图片参数和面板状态会保留。', style: TextStyle(color: _muted, height: 1.45)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: _primary), child: const Text('新会话')),
+        ],
+      ),
+    );
+    if (confirmed == true) _startNewSession();
+  }
+
+  void _startNewSession() {
+    if (!mounted) return;
+    setState(() {
+      _messages.clear();
+      _input.clear();
+      _attachedFiles.clear();
+      _attachedBase64Images.clear();
+      _loading = false;
+      _forceImage = false;
+    });
+    _scrollBottom();
+    _snack('已开始新会话');
+  }
+
+  Future<void> _setStudioHeaderCollapsed(bool collapsed) async {
+    if (!mounted) return;
+    setState(() => _studioHeaderCollapsed = collapsed);
+    await _saveAllSettings();
+    if (!mounted) return;
+    _snack(collapsed ? '已收起创作面板' : '已展开创作面板');
+  }
+
+'''
+              if marker not in text:
+                  raise SystemExit('marker not found: _pickImage')
+              text = text.replace(marker, insert + marker, 1)
+              print('patched methods')
+
+          if 'Icons.add_comment_rounded' not in text:
+              replace_once(
+                  "          _roundIcon(Icons.terminal_rounded, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugConsoleScreen()))),\n          _roundIcon(Icons.settings_rounded, _openSettings),",
+                  "          _roundIcon(Icons.add_comment_rounded, _confirmNewSession),\n          _roundIcon(Icons.terminal_rounded, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugConsoleScreen()))),\n          _roundIcon(Icons.settings_rounded, _openSettings),",
+                  'appbar new session button',
+              )
+
+          if "Widget _expandedStudioHeader() => _glassPanel(" not in text:
+              replace_once(
+                  "  Widget _studioHeader() => _glassPanel(",
+                  "  Widget _studioHeader() => _studioHeaderCollapsed ? _collapsedStudioHeader() : _expandedStudioHeader();\n\n  Widget _expandedStudioHeader() => _glassPanel(",
+                  'studio header wrapper',
+              )
+
+          if "label: const Text('收起')" not in text:
+              replace_once(
+                  "const Icon(Icons.keyboard_arrow_up_rounded, color: _muted)]))))",
+                  "TextButton.icon(onPressed: () => _setStudioHeaderCollapsed(true), icon: const Icon(Icons.keyboard_arrow_up_rounded), label: const Text('收起'))]))))",
+                  'expanded collapse text button',
+              )
+
+          if 'Widget _collapsedStudioHeader()' not in text:
+              collapsed = '''
+  Widget _collapsedStudioHeader() => _glassPanel(
+        margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+        padding: const EdgeInsets.all(12),
+        radius: 24,
+        child: InkWell(
+          onTap: () => _setStudioHeaderCollapsed(false),
+          borderRadius: BorderRadius.circular(18),
+          child: Row(children: [
+            const Icon(Icons.auto_awesome_rounded, color: _primary, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 2),
+                Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)} · $_imageCount 张', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis),
+              ]),
+            ),
+            TextButton.icon(
+              onPressed: () => _setStudioHeaderCollapsed(false),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              label: const Text('展开'),
+            ),
+          ]),
+        ),
+      );
+
+'''
+              replace_once("  Widget _statusChip() =>", collapsed + "  Widget _statusChip() =>", 'collapsed header widget')
+
+          if "label: const Text('开新会话')" not in text:
+              old = "  Widget _emptyState() => ListView(padding: const EdgeInsets.all(24), children: const [SizedBox(height: 28), Icon(Icons.auto_awesome_rounded, color: _primary, size: 72), SizedBox(height: 10), Text('今天想创作什么？', textAlign: TextAlign.center, style: TextStyle(color: _text, fontSize: 25, fontWeight: FontWeight.w900)), SizedBox(height: 10), Text('描述角色、场景、画风与细节，或上传参考图进行二次创作。下方可调整画幅、清晰度和提示词润色。', textAlign: TextAlign.center, style: TextStyle(color: _muted, height: 1.55, fontWeight: FontWeight.w600)), SizedBox(height: 18), _PromptExample()]);"
+              new = "  Widget _emptyState() => ListView(padding: const EdgeInsets.all(24), children: [const SizedBox(height: 28), const Icon(Icons.auto_awesome_rounded, color: _primary, size: 72), const SizedBox(height: 10), const Text('今天想创作什么？', textAlign: TextAlign.center, style: TextStyle(color: _text, fontSize: 25, fontWeight: FontWeight.w900)), const SizedBox(height: 10), const Text('描述角色、场景、画风与细节，或上传参考图进行二次创作。下方可调整画幅、清晰度和提示词润色。', textAlign: TextAlign.center, style: TextStyle(color: _muted, height: 1.55, fontWeight: FontWeight.w600)), const SizedBox(height: 18), Wrap(alignment: WrapAlignment.center, spacing: 10, runSpacing: 10, children: [FilledButton.icon(onPressed: _confirmNewSession, style: FilledButton.styleFrom(backgroundColor: _primary), icon: const Icon(Icons.add_comment_rounded), label: const Text('开新会话')), OutlinedButton.icon(onPressed: () => _setStudioHeaderCollapsed(false), icon: const Icon(Icons.keyboard_arrow_down_rounded), label: const Text('展开创作面板'))]), const SizedBox(height: 18), const _PromptExample()]);"
+              if old not in text:
+                  raise SystemExit('marker not found: empty state')
+              text = text.replace(old, new, 1)
+              print('patched empty state buttons')
+
+          for marker in ['_confirmNewSession', '_setStudioHeaderCollapsed', '开新会话', '展开创作面板']:
+              if marker not in text:
+                  raise SystemExit(f'missing required marker: {marker}')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/home_screen.dart
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "feat: add visible session and panel controls"
+            git push
+          fi
