@@ -1,76 +1,63 @@
-name: Build Flutter APK
+name: Build APK
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build_apk.yml'
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Cache Android debug keystore for stable fallback signing
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-
-      - name: Restore release keystore from secrets if configured
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
-            printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/key.properties
-            echo "Release keystore restored from GitHub Secrets."
-          else
-            echo "Release keystore secrets are not configured. Falling back to cached debug keystore."
-          fi
-
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
-          flutter-version: '3.22.2'
+          flutter-version: '3.24.5'
+          channel: stable
           cache: true
 
-      - name: Patch studio header
-        run: python3 tools/patch_studio_header.py
-
-      - name: Get dependencies
+      - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build APK
-        shell: bash
-        run: |
-          APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          BUILD_NAME=${APP_VERSION%%+*}
-          PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
-          BUILD_NUMBER=${GITHUB_RUN_NUMBER:-$PUBSPEC_BUILD_NUMBER}
-          if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-            BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
-          fi
-          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
-          flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos
 
-      - name: Upload APK Artifact
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Collect APK
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/Luna-AI-release.apk
+          ls -lh artifacts
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Luna-AI-release-apk
+          path: artifacts/Luna-AI-release.apk
+          if-no-files-found: error
+          retention-days: 30
