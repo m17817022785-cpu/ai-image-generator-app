@@ -11,6 +11,7 @@ class SettingsService {
   static const String _keyImageAspectRatio = 'image_aspect_ratio';
   static const String _keyImageQuality = 'image_quality';
   static const String _keyEnhanceImagePrompt = 'enhance_image_prompt';
+  static const String _keyStudioHeaderCollapsed = 'studio_header_collapsed';
 
   Future<void> saveSettings({
     required String apiKey,
@@ -23,6 +24,7 @@ class SettingsService {
     String imageAspectRatio = '1:1',
     String imageQuality = 'auto',
     bool enhanceImagePrompt = true,
+    bool? studioHeaderCollapsed,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyApiKey, apiKey);
@@ -35,6 +37,7 @@ class SettingsService {
     await prefs.setString(_keyImageAspectRatio, imageAspectRatio.trim().isEmpty ? '1:1' : imageAspectRatio.trim());
     await prefs.setString(_keyImageQuality, imageQuality.trim().isEmpty ? 'auto' : imageQuality.trim());
     await prefs.setBool(_keyEnhanceImagePrompt, enhanceImagePrompt);
+    if (studioHeaderCollapsed != null) await prefs.setBool(_keyStudioHeaderCollapsed, studioHeaderCollapsed);
   }
 
   Future<Map<String, String>> getSettings() async {
@@ -44,10 +47,8 @@ class SettingsService {
     final imageApiKey = prefs.getString(_keyImageApiKey) ?? '';
     return {
       'apiKey': prefs.getString(_keyApiKey) ?? '',
-      // 为空表示图片工具令牌沿用聊天令牌，兼容老版本设置。
       'imageApiKey': imageApiKey,
       'baseUrl': baseUrl,
-      // 为空表示图片工具接口沿用聊天接口，兼容老版本设置。
       'imageBaseUrl': imageBaseUrl,
       'chatModel': prefs.getString(_keyChatModel) ?? 'gpt-4o-mini',
       'imageModel': prefs.getString(_keyImageModel) ?? 'dall-e-3',
@@ -55,6 +56,7 @@ class SettingsService {
       'imageAspectRatio': prefs.getString(_keyImageAspectRatio) ?? '1:1',
       'imageQuality': prefs.getString(_keyImageQuality) ?? 'auto',
       'enhanceImagePrompt': (prefs.getBool(_keyEnhanceImagePrompt) ?? true).toString(),
+      'studioHeaderCollapsed': (prefs.getBool(_keyStudioHeaderCollapsed) ?? true).toString(),
     };
   }
 
@@ -70,5 +72,6 @@ class SettingsService {
     await prefs.remove(_keyImageAspectRatio);
     await prefs.remove(_keyImageQuality);
     await prefs.remove(_keyEnhanceImagePrompt);
+    await prefs.remove(_keyStudioHeaderCollapsed);
   }
 }
