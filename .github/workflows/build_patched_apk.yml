@@ -1,6 +1,10 @@
 name: Build Patched APK
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build_patched_apk.yml'
   workflow_dispatch:
 
 jobs:
@@ -17,12 +21,12 @@ jobs:
           api = Path('lib/services/api_service.dart')
           s = api.read_text(encoding='utf-8')
           s = s.replace('涉及人物时，如画面主体明显不是儿童，请使用“成年女性/成年男性/adult woman/adult man”等明确成年表述，避免 young girl、young woman、少女、女孩等可能触发年龄歧义的词。', '涉及人物时，不要主动判断或补充年龄、性别、身份；参考图人物只称为“参考图中的人物 / 主体 / 角色形象”，强调保持面部特征、发型、服装、姿态、气质和整体视觉一致性。不要主动添加 young、adult、teen、girl、boy、child、少女、女孩、男孩、成年、年轻等年龄或身份词，除非用户原文明确要求。')
-          old_return = """    final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';
+          old = """    final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';
     return refined.isEmpty ? userText : refined;
   }
 
   Stream<String> generateChatStream"""
-          new_return = """    final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';
+          helper = """    final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';
     return _neutralizeAutoAddedIdentityTerms(refined.isEmpty ? userText : refined, originalText: userText, hasReferenceImage: base64Image != null && base64Image.isNotEmpty);
   }
 
@@ -60,8 +64,8 @@ jobs:
   }
 
   Stream<String> generateChatStream"""
-          if '_neutralizeAutoAddedIdentityTerms' not in s and old_return in s:
-              s = s.replace(old_return, new_return)
+          if '_neutralizeAutoAddedIdentityTerms' not in s and old in s:
+              s = s.replace(old, helper)
           api.write_text(s, encoding='utf-8')
 
           home = Path('lib/screens/home_screen.dart')
