@@ -232,15 +232,15 @@ class _HomeScreenState extends State<HomeScreen> {
     await _finishImageMessage(
       placeholder: placeholder,
       prompt: decision.prompt.isEmpty ? userMessage.content : decision.prompt,
-      imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,
-      base64Image: null, base64Images: base64Images,
+      imageFiles: decision.action == ToolAction.imageToImage ? imageFiles : const <File>[],
+      base64Images: decision.action == ToolAction.imageToImage ? base64Images : const <String>[],
       quality: _imageQuality == 'auto' ? decision.quality : _imageQuality,
     );
   }
 
   Future<void> _replyImage({required String prompt, required List<File> imageFiles, required List<String> base64Images, required String quality}) async {
     final placeholder = _assistantPlaceholder(imageFiles.isEmpty ? '正在构建画面…' : '正在读取参考图并生成新画面…');
-    await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, base64Image: null, base64Images: base64Images, quality: quality);
+    await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFiles: imageFiles, base64Images: base64Images, quality: quality);
   }
 
   Message _assistantPlaceholder(String text) {
@@ -406,7 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _bubble(Message msg) {
     final user = msg.role == 'user';
-    return Align(alignment: user ? Alignment.centerRight : Alignment.centerLeft, child: Container(constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86), margin: const EdgeInsets.symmetric(vertical: 6), padding: const EdgeInsets.all(12), decoration: BoxDecoration(gradient: user ? const LinearGradient(colors: [_primary, _primary2]) : null, color: user ? null : Colors.white.withOpacity(.82), borderRadius: BorderRadius.only(topLeft: const Radius.circular(22), topRight: const Radius.circular(22), bottomLeft: Radius.circular(user ? 22 : 8), bottomRight: Radius.circular(user ? 8 : 22)), border: Border.all(color: user ? Colors.white.withOpacity(.55) : _line), boxShadow: [BoxShadow(color: _primary.withOpacity(0.10), blurRadius: 18, offset: const Offset(0, 8))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [if (msg.type == MessageType.image) _imageMessage(msg.content) else MarkdownBody(data: msg.content.isEmpty && msg.isGenerating ? '●' : msg.content, styleSheet: MarkdownStyleSheet(p: TextStyle(color: user ? Colors.white : _text, height: 1.45, fontWeight: FontWeight.w600))), if (msg.localFilePath != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.localFilePath!.split('/').last}', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12)))])));
+    return Align(alignment: user ? Alignment.centerRight : Alignment.centerLeft, child: Container(constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86), margin: const EdgeInsets.symmetric(vertical: 6), padding: const EdgeInsets.all(12), decoration: BoxDecoration(gradient: user ? const LinearGradient(colors: [_primary, _primary2]) : null, color: user ? null : Colors.white.withOpacity(.82), borderRadius: BorderRadius.only(topLeft: const Radius.circular(22), topRight: const Radius.circular(22), bottomLeft: Radius.circular(user ? 22 : 8), bottomRight: Radius.circular(user ? 8 : 22)), border: Border.all(color: user ? Colors.white.withOpacity(.55) : _line), boxShadow: [BoxShadow(color: _primary.withOpacity(0.10), blurRadius: 18, offset: const Offset(0, 8))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [if (msg.type == MessageType.image) _imageMessage(msg.content) else MarkdownBody(data: msg.content.isEmpty && msg.isGenerating ? '●' : msg.content, styleSheet: MarkdownStyleSheet(p: TextStyle(color: user ? Colors.white : _text, height: 1.45, fontWeight: FontWeight.w600))), if (msg.effectiveLocalFilePaths.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.effectiveLocalFilePaths.length} 张', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12)))])));
   }
 
   Widget _attachedPreviewStrip() => Container(
@@ -430,7 +430,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _composer() => _glassPanel(margin: const EdgeInsets.fromLTRB(12, 4, 12, 12), padding: const EdgeInsets.all(10), radius: 28, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        if (_attachedFiles.isNotEmpty) Container(margin: const EdgeInsets.only(bottom: 8), decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))), child: ListTile(dense: true, leading: const Icon(Icons.image_rounded, color: _cyan), title: Text(_attachedFile!.path.split('/').last, style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() { _attachedFile = null; _attachedBase64 = null; }), icon: const Icon(Icons.close, color: _primary)))),
+          if (_attachedFiles.isNotEmpty) _attachedPreviewStrip(),
         Row(children: [_smallButton(Icons.add_photo_alternate_rounded, _pickImage, _cyan), const SizedBox(width: 6), _smallButton(_forceImage ? Icons.brush_rounded : Icons.auto_awesome_outlined, () => setState(() => _forceImage = !_forceImage), _forceImage ? _primary : _primary2), const SizedBox(width: 6), Expanded(child: TextField(controller: _input, style: const TextStyle(color: _text, fontWeight: FontWeight.w700), minLines: 1, maxLines: 5, decoration: InputDecoration(hintText: _forceImage ? '描述要生成或编辑的画面…' : '输入聊天内容，或描述想生成的图片…', hintStyle: const TextStyle(color: _muted), filled: true, fillColor: Colors.white.withOpacity(.68), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12)))), const SizedBox(width: 6), _smallButton(Icons.arrow_upward_rounded, _loading ? null : _send, _primary)]),
       ]));
 

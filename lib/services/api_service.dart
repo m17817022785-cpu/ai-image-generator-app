@@ -177,7 +177,14 @@ class ApiService {
     return msg;
   }
 
-  Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image) {
+  List<String> _effectiveImages(String? base64Image, List<String>? base64Images) {
+    final images = <String>[];
+    if (base64Images != null) images.addAll(base64Images.map((e) => e.trim()).where((e) => e.isNotEmpty));
+    if (images.isEmpty && base64Image != null && base64Image.trim().isNotEmpty) images.add(base64Image.trim());
+    return images;
+  }
+
+  Map<String, dynamic> _imageContentMessage(String role, String text, String? base64Image, {List<String>? base64Images}) {
     if (base64Image != null && base64Image.isNotEmpty) {
       return {
         'role': role,
@@ -190,7 +197,7 @@ class ApiService {
     return {'role': role, 'content': text};
   }
 
-  Future<ToolDecision> decideTool({required String userText, required String? base64Image, required String apiKey, required String baseUrl, required String model}) async {
+  Future<ToolDecision> decideTool({required String userText, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model}) async {
     final url = _endpoint(baseUrl, '/chat/completions');
     final actualModel = normalizeChatModel(model);
     final hasImage = base64Image != null && base64Image.isNotEmpty;
@@ -254,12 +261,12 @@ JSON：{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图�
 
   String _qualityLabel(String quality) => switch (quality.trim().toLowerCase()) {'hd' || 'high' => '高清/高质量', 'medium' => '中高质量', 'low' => '快速/低成本', 'standard' => '标准质量', _ => '自动'};
 
-  Future<String> refineImagePrompt({required String userText, required String? base64Image, required String apiKey, required String baseUrl, required String model, required String aspectRatio, required String size, required String quality, required bool isEdit}) async {
+  Future<String> refineImagePrompt({required String userText, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model, required String aspectRatio, required String size, required String quality, required bool isEdit}) async {
     final url = _endpoint(baseUrl, '/chat/completions');
     final actualModel = normalizeChatModel(model);
     const systemPrompt = '''你是专业图片生成提示词优化器。请把用户要求整理为更适合图片生成/图片编辑模型的提示词。只能输出最终提示词，不要 Markdown，不要解释。\n规则：\n1. 保留用户核心意图，可补充构图、光线、镜头、质感、细节、色彩、背景和氛围。\n2. 图生图/参考图生成时，只把上传图片称为“参考图”，把图中人物称为“参考图中的人物 / 主体 / 角色形象”，强调参考其面部特征、发型、服装、姿态、气质和整体视觉一致性。\n3. 不要主动判断或补充年龄、性别、身份；不要主动添加 young、adult、teen、girl、boy、child、少女、女孩、男孩、成年、年轻等年龄或身份词，除非用户原文明确要求。\n4. 输出比例由目标尺寸控制，例如 16:9、9:16、1:1；不要说修改参考图本身的比例。\n5. 不要编造与参考图冲突的人物设定。''';
     final userInstruction = '原始要求：$userText\n生成模式：${isEdit ? '图生图/图片编辑' : '文生图'}\n目标比例：$aspectRatio\n目标尺寸：$size\n清晰度/质量：${_qualityLabel(quality)}\n请润色为高质量图片生成提示词。';
-    final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userInstruction, base64Image)], 'stream': false}));
+    final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userInstruction, null, base64Images: _effectiveImages(base64Image, base64Images))], 'stream': false}));
     final bodyText = utf8.decode(response.bodyBytes);
     if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('提示词润色失败 ${response.statusCode}: ${_extractError(bodyText)}');
     final parsed = _decodeJsonObject(bodyText, category: 'prompt_refine', title: 'LLM 润色提示词响应解析失败', endpoint: url.toString(), model: actualModel, statusCode: response.statusCode);
@@ -386,11 +393,41 @@ JSON：{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图�
     return _extractImageResult(bodyText, endpoint: url.toString(), model: editModel, category: 'image_to_image');
   }
 
-  Future<String> _callChatStyleImageTool({required String prompt, required String? base64Image, required String apiKey, required String baseUrl, required String model, required String size, String quality = 'auto', required String category, required String title}) async {
+  Future<String> editImages(String prompt, List<File> imageFiles, String apiKey, String baseUrl, String model, {String size = '1024x1024', String quality = 'auto'}) async {
+    if (imageFiles.isEmpty) return generateImage(prompt, apiKey, baseUrl, model, size: size, quality: quality);
+    if (imageFiles.length == 1) return editImage(prompt, imageFiles.first, apiKey, baseUrl, model, size: size, quality: quality);
+    if (_useChatImageEndpoint(baseUrl)) {
+      final images = <String>[];
+      for (final file in imageFiles) {
+        images.add(base64Encode(await file.readAsBytes()));
+      }
+      return _callChatStyleImageTool(prompt: prompt, base64Image: null, base64Images: images, apiKey: apiKey, baseUrl: baseUrl, model: model, size: size, quality: quality, category: 'image_to_image', title: '图生图 / 图片编辑');
+    }
+    final url = _endpoint(baseUrl, '/images/edits');
+    final editModel = normalizeImageEditModel(model);
+    final qualityValue = _normalizeImageQuality(quality, editModel);
+    final request = http.MultipartRequest('POST', url)
+      ..headers['Accept'] = 'application/json'
+      ..headers['Authorization'] = 'Bearer ' + apiKey.trim()
+      ..fields['model'] = editModel
+      ..fields['prompt'] = prompt
+      ..fields['n'] = '1'
+      ..fields['size'] = size;
+    if (qualityValue != null) request.fields['quality'] = qualityValue;
+    for (final file in imageFiles) {
+      request.files.add(await http.MultipartFile.fromPath('image', file.path));
+    }
+    final response = await http.Response.fromStream(await request.send());
+    final bodyText = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_friendlyImageError(bodyText, model, editModel, '图生图 / 图片编辑'));
+    return _extractImageResult(bodyText, endpoint: url.toString(), model: editModel, category: 'image_to_image');
+  }
+
+  Future<String> _callChatStyleImageTool({required String prompt, required String? base64Image, List<String>? base64Images, required String apiKey, required String baseUrl, required String model, required String size, String quality = 'auto', required String category, required String title}) async {
     final url = _endpoint(baseUrl, '/chat/completions');
     final actualModel = model.trim().isEmpty ? normalizeChatModel(model) : model.trim();
     final instruction = base64Image != null && base64Image.isNotEmpty ? '$prompt\n\n请根据上传图片进行生成/编辑，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。' : '$prompt\n\n请生成图片，返回图片 URL 或 base64 图片数据。尺寸：$size。清晰度/质量：${_qualityLabel(quality)}。';
-    final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'}, _imageContentMessage('user', instruction, base64Image)], 'stream': false}));
+    final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': '你是图片生成/编辑工具。请只返回最终图片 URL 或 data:image/...;base64,...，不要输出多余解释。'}, _imageContentMessage('user', instruction, null, base64Images: images)], 'stream': false}));
     final bodyText = utf8.decode(response.bodyBytes);
     if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_friendlyImageError(bodyText, model, actualModel, title));
     return _extractImageResultFlexible(bodyText, endpoint: url.toString(), model: actualModel, category: category);
