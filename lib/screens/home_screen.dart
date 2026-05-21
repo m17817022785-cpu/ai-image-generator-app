@@ -508,7 +508,43 @@ class _HomeScreenState extends State<HomeScreen> {
     final image = TextEditingController(text: _imageModel);
     final edit = TextEditingController(text: _imageEditModel);
     try {
-      await showDialog<void>(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.white.withOpacity(.96), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)), title: const Text('API 配置', style: TextStyle(color: _text, fontWeight: FontWeight.w900)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [_field(key, '聊天 API Key'), _field(base, '聊天 Base URL'), _field(chat, '聊天模型'), _field(imageKey, '图片 API Key（可留空）'), _field(imageBase, '图片 Base URL（可留空）'), _field(image, '文生图模型'), _field(edit, '图生图模型')])), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')), FilledButton(style: FilledButton.styleFrom(backgroundColor: _primary), onPressed: () async { setState(() { _apiKey = key.text.trim(); _imageApiKey = imageKey.text.trim(); _baseUrl = base.text.trim().isEmpty ? 'https://api.openai.com/v1' : base.text.trim(); _imageBaseUrl = imageBase.text.trim(); _chatModel = chat.text.trim().isEmpty ? 'gpt-4o-mini' : chat.text.trim(); _imageModel = _api.normalizeImageModel(image.text.trim().isEmpty ? 'dall-e-3' : image.text.trim()); _imageEditModel = _api.normalizeImageEditModel(edit.text.trim().isEmpty ? 'gpt-image-1' : edit.text.trim()); }); await _saveAllSettings(); if (mounted) Navigator.pop(ctx); _snack('设置已保存'); }, child: const Text('保存'))]));
+      await showDialog<void>(context: context, builder: (ctx) => AlertDialog(backgroundColor: Colors.white.withOpacity(.96), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)), title: const Text('API 配置', style: TextStyle(color: _text, fontWeight: FontWeight.w900)), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+  _field(key, '聊天 API Key'),
+  _field(base, '聊天 Base URL'),
+  _field(chat, '聊天模型'),
+  Align(
+    alignment: Alignment.centerRight,
+    child: TextButton.icon(
+      onPressed: () => _fetchAndFillModel(key: key, base: base, target: chat, title: '选择聊天模型'),
+      icon: const Icon(Icons.cloud_sync_rounded),
+      label: const Text('获取聊天模型'),
+    ),
+  ),
+  _field(imageKey, '图片 API Key（可留空）'),
+  _field(imageBase, '图片 Base URL（可留空）'),
+  _field(image, '文生图模型'),
+  _field(edit, '图生图模型'),
+  Align(
+    alignment: Alignment.centerRight,
+    child: Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        TextButton.icon(
+          onPressed: () => _fetchAndFillModel(key: key, base: base, target: image, title: '选择文生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+          icon: const Icon(Icons.image_search_rounded),
+          label: const Text('获取文生图模型'),
+        ),
+        TextButton.icon(
+          onPressed: () => _fetchAndFillModel(key: key, base: base, target: edit, title: '选择图生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+          icon: const Icon(Icons.auto_fix_high_rounded),
+          label: const Text('获取图生图模型'),
+        ),
+      ],
+    ),
+  ),
+])), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')), FilledButton(style: FilledButton.styleFrom(backgroundColor: _primary), onPressed: () async { setState(() { _apiKey = key.text.trim(); _imageApiKey = imageKey.text.trim(); _baseUrl = base.text.trim().isEmpty ? 'https://api.openai.com/v1' : base.text.trim(); _imageBaseUrl = imageBase.text.trim(); _chatModel = chat.text.trim().isEmpty ? 'gpt-4o-mini' : chat.text.trim(); _imageModel = _api.normalizeImageModel(image.text.trim().isEmpty ? 'dall-e-3' : image.text.trim()); _imageEditModel = _api.normalizeImageEditModel(edit.text.trim().isEmpty ? 'gpt-image-1' : edit.text.trim()); }); await _saveAllSettings(); if (mounted) Navigator.pop(ctx); _snack('设置已保存'); }, child: const Text('保存'))]));
     } finally {
       key.dispose(); imageKey.dispose(); base.dispose(); imageBase.dispose(); chat.dispose(); image.dispose(); edit.dispose();
     }
