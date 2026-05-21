@@ -43,8 +43,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = false;
   bool _forceImage = false;
   bool _enhanceImagePrompt = true;
-  File? _attachedFile;
-  String? _attachedBase64;
+  int _imageCount = 1;
+  final List<File> _attachedFiles = [];
+  final List<String> _attachedBase64Images = [];
 
   String _apiKey = '';
   String _imageApiKey = '';
@@ -58,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const _aspectOptions = ['1:1', '16:9', '9:16', '4:3', '3:4'];
   static const _qualityOptions = ['auto', 'standard', 'hd', 'low', 'medium', 'high'];
+  static const _imageCountOptions = [1, 2, 3, 4];
+  static const _maxReferenceImages = 8;
 
   String get _effectiveImageApiKey => _imageApiKey.trim().isEmpty ? _apiKey : _imageApiKey.trim();
   String get _effectiveImageBaseUrl => _imageBaseUrl.trim().isEmpty ? _baseUrl : _imageBaseUrl.trim();
@@ -110,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _imageAspectRatio = _aspectOptions.contains(s['imageAspectRatio']) ? s['imageAspectRatio']! : '1:1';
         _imageQuality = _qualityOptions.contains(s['imageQuality']) ? s['imageQuality']! : 'auto';
         _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';
+        _imageCount = int.tryParse(s['imageCount'] ?? '1')?.clamp(1, 4).toInt() ?? 1;
       });
     } catch (e) {
       _snack('读取设置失败：$e');
@@ -127,45 +131,72 @@ class _HomeScreenState extends State<HomeScreen> {
         imageAspectRatio: _imageAspectRatio,
         imageQuality: _imageQuality,
         enhanceImagePrompt: _enhanceImagePrompt,
+        imageCount: _imageCount,
       );
 
   Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
-    if (picked == null) return;
-    final file = File(picked.path);
-    final bytes = await file.readAsBytes();
+    final remaining = _maxReferenceImages - _attachedFiles.length;
+    if (remaining <= 0) {
+      _snack('最多支持 $_maxReferenceImages 张参考图，请先删除部分图片。');
+      return;
+    }
+    final picked = await ImagePicker().pickMultiImage(imageQuality: 75);
+    if (picked.isEmpty) return;
+    final files = <File>[];
+    final images = <String>[];
+    for (final item in picked.take(remaining)) {
+      final file = File(item.path);
+      files.add(file);
+      images.add(base64Encode(await file.readAsBytes()));
+    }
     if (!mounted) return;
     setState(() {
-      _attachedFile = file;
-      _attachedBase64 = base64Encode(bytes);
+      _attachedFiles.addAll(files);
+      _attachedBase64Images.addAll(images);
+    });
+    if (picked.length > remaining) _snack('最多支持 $_maxReferenceImages 张参考图，已添加前 $remaining 张。');
+  }
+
+  void _removeAttachedImage(int index) {
+    if (index < 0 || index >= _attachedFiles.length) return;
+    setState(() {
+      _attachedFiles.removeAt(index);
+      if (index < _attachedBase64Images.length) _attachedBase64Images.removeAt(index);
+    });
+  }
+
+  void _clearAttachedImages() {
+    setState(() {
+      _attachedFiles.clear();
+      _attachedBase64Images.clear();
     });
   }
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    final file = _attachedFile;
-    final b64 = _attachedBase64;
-    if (text.isEmpty && file == null) return;
+    final files = List<File>.from(_attachedFiles);
+    final b64s = List<String>.from(_attachedBase64Images);
+    if (text.isEmpty && files.isEmpty) return;
     if (_apiKey.trim().isEmpty) {
       _snack('请先配置聊天 API Key');
       return;
     }
-    final content = text.isEmpty ? '请根据这张图片继续处理' : text;
-    final user = Message(id: DateTime.now().microsecondsSinceEpoch.toString(), role: 'user', content: content, localFilePath: file?.path, base64Image: b64);
+    final content = text.isEmpty ? (files.length > 1 ? '请根据这些图片继续处理' : '请根据这张图片继续处理') : text;
+    final user = Message(id: DateTime.now().microsecondsSinceEpoch.toString(), role: 'user', content: content, localFilePaths: files.map((e) => e.path).toList(), base64Images: b64s);
     setState(() {
       _messages.add(user);
       _input.clear();
-      _attachedFile = null;
-      _attachedBase64 = null;
+      _attachedFiles.clear();
+      _attachedBase64Images.clear();
       _loading = true;
     });
     _scrollBottom();
-    _log.info('user_input', '用户发送消息', _forceImage ? '图片工具模式' : '自动模式', details: {'text': content, 'hasImage': file != null, 'aspectRatio': _imageAspectRatio, 'size': _selectedSize, 'quality': _imageQuality, 'enhanceImagePrompt': _enhanceImagePrompt});
+    _log.info('user_input', '用户发送消息', _forceImage ? '图片工具模式' : '自动模式', details: {'text': content, 'referenceImageCount': files.length, 'generateImageCount': _imageCount, 'aspectRatio': _imageAspectRatio, 'size': _selectedSize, 'quality': _imageQuality, 'enhanceImagePrompt': _enhanceImagePrompt});
     try {
       if (_forceImage) {
-        await _replyImage(prompt: content, imageFile: file, base64Image: b64, quality: _imageQuality);
+        await _replyImage(prompt: content, imageFiles: files, base64Images: b64s, quality: _imageQuality);
       } else {
-        await _replyAuto(userMessage: user, imageFile: file, base64Image: b64);
+        await _replyAuto(userMessage: user, imageFiles: files, base64Images: b64s);
       }
     } catch (e) {
       _log.error('send', '发送失败', e.toString());
@@ -180,9 +211,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _replyAuto({required Message userMessage, required File? imageFile, required String? base64Image}) async {
+  Future<void> _replyAuto({required Message userMessage, required List<File> imageFiles, required List<String> base64Images}) async {
     final placeholder = _assistantPlaceholder('正在理解你的创作意图…');
-    final decision = await _api.decideTool(userText: userMessage.content, base64Image: base64Image, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel);
+    final decision = await _api.decideTool(userText: userMessage.content, base64Image: null, base64Images: base64Images, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel);
     if (decision.action == ToolAction.directAnswer) {
       placeholder.content = '';
       final stream = _api.generateChatStream(_messages.where((m) => m.id != placeholder.id).toList(), _apiKey, _baseUrl, _chatModel);
@@ -202,14 +233,14 @@ class _HomeScreenState extends State<HomeScreen> {
       placeholder: placeholder,
       prompt: decision.prompt.isEmpty ? userMessage.content : decision.prompt,
       imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,
-      base64Image: base64Image,
+      base64Image: null, base64Images: base64Images,
       quality: _imageQuality == 'auto' ? decision.quality : _imageQuality,
     );
   }
 
-  Future<void> _replyImage({required String prompt, required File? imageFile, required String? base64Image, required String quality}) async {
-    final placeholder = _assistantPlaceholder(imageFile == null ? '正在构建画面…' : '正在分析参考图并生成新画面…');
-    await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, base64Image: base64Image, quality: quality);
+  Future<void> _replyImage({required String prompt, required List<File> imageFiles, required List<String> base64Images, required String quality}) async {
+    final placeholder = _assistantPlaceholder(imageFiles.isEmpty ? '正在构建画面…' : '正在读取参考图并生成新画面…');
+    await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, base64Image: null, base64Images: base64Images, quality: quality);
   }
 
   Message _assistantPlaceholder(String text) {
@@ -219,21 +250,40 @@ class _HomeScreenState extends State<HomeScreen> {
     return msg;
   }
 
-  Future<void> _finishImageMessage({required Message placeholder, required String prompt, required File? imageFile, required String? base64Image, required String quality}) async {
+  Future<void> _finishImageMessage({required Message placeholder, required String prompt, required List<File> imageFiles, required List<String> base64Images, required String quality}) async {
     var finalPrompt = prompt;
     if (_enhanceImagePrompt) {
       if (mounted) setState(() => placeholder.content = '正在优化提示词与画面细节…');
-      finalPrompt = await _api.refineImagePrompt(userText: prompt, base64Image: base64Image, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel, aspectRatio: _imageAspectRatio, size: _selectedSize, quality: quality, isEdit: imageFile != null);
+      finalPrompt = await _api.refineImagePrompt(userText: prompt, base64Image: null, base64Images: base64Images, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel, aspectRatio: _imageAspectRatio, size: _selectedSize, quality: quality, isEdit: imageFiles.isNotEmpty);
     }
-    if (mounted) setState(() => placeholder.content = imageFile == null ? '正在生成 $_imageAspectRatio 画面…' : '正在编辑 $_imageAspectRatio 参考图…');
-    final image = imageFile == null
-        ? await _api.generateImage(finalPrompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: _selectedSize, quality: quality)
-        : await _api.editImage(finalPrompt, imageFile, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: _selectedSize, quality: quality);
-    if (!mounted) return;
-    setState(() {
-      final index = _messages.indexWhere((m) => m.id == placeholder.id);
-      if (index >= 0) _messages[index] = Message(id: placeholder.id, role: 'assistant', content: image, type: MessageType.image);
-    });
+    final total = _imageCount.clamp(1, 4).toInt();
+    final generated = <String>[];
+    try {
+      for (var i = 0; i < total; i++) {
+        if (mounted) setState(() => placeholder.content = imageFiles.isEmpty ? '正在生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…' : '正在参考 ${imageFiles.length} 张图生成第 ${i + 1} / $total 张 $_imageAspectRatio 画面…');
+        final image = imageFiles.isEmpty
+            ? await _api.generateImage(finalPrompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: _selectedSize, quality: quality)
+            : await _api.editImages(finalPrompt, imageFiles, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: _selectedSize, quality: quality);
+        generated.add(image);
+        if (!mounted) return;
+        setState(() {
+          if (i == 0) {
+            final index = _messages.indexWhere((m) => m.id == placeholder.id);
+            if (index >= 0) _messages[index] = Message(id: placeholder.id, role: 'assistant', content: image, type: MessageType.image);
+          } else {
+            _messages.add(Message(id: '${DateTime.now().microsecondsSinceEpoch + i}', role: 'assistant', content: image, type: MessageType.image));
+          }
+        });
+        _scrollBottom();
+      }
+      if (generated.length > 1) _snack('已生成 ${generated.length} 张图片');
+    } catch (e) {
+      if (generated.isNotEmpty) {
+        _snack('已生成 ${generated.length} / $total 张，后续生成失败：$e');
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<void> _saveImage(String url) async {
@@ -299,13 +349,13 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(children: [
             Container(width: 56, height: 56, decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_primary, _primary2]), boxShadow: [BoxShadow(color: _primary.withOpacity(.28), blurRadius: 22, offset: const Offset(0, 10))]), child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 28)),
             const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}画质', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700))])),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}画质 · $_imageCount 张', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700))])),
             _statusChip(),
           ]),
           const SizedBox(height: 12),
-          Row(children: [Expanded(child: _modeButton(Icons.auto_awesome, '自动', !_forceImage, () => setState(() => _forceImage = false))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.brush_rounded, '生图', _forceImage, () => setState(() => _forceImage = true))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.add_photo_alternate_rounded, '参考图', _attachedFile != null, _pickImage))]),
+          Row(children: [Expanded(child: _modeButton(Icons.auto_awesome, '自动', !_forceImage, () => setState(() => _forceImage = false))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.brush_rounded, '生图', _forceImage, () => setState(() => _forceImage = true))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.add_photo_alternate_rounded, '参考图', _attachedFiles.isNotEmpty, _pickImage))]),
           const SizedBox(height: 10),
-          InkWell(onTap: _openImageParams, borderRadius: BorderRadius.circular(20), child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12), decoration: BoxDecoration(color: Colors.white.withOpacity(.58), borderRadius: BorderRadius.circular(20), border: Border.all(color: _line)), child: Row(children: [const Icon(Icons.tune_rounded, color: _primary), const SizedBox(width: 8), Expanded(child: Text('图片参数 · $_imageAspectRatio · ${_qualityLabel(_imageQuality)} · ${_enhanceImagePrompt ? '润色开' : '润色关'}', style: const TextStyle(color: _text, fontWeight: FontWeight.w900))), const Icon(Icons.keyboard_arrow_up_rounded, color: _muted)]))),
+          InkWell(onTap: _openImageParams, borderRadius: BorderRadius.circular(20), child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12), decoration: BoxDecoration(color: Colors.white.withOpacity(.58), borderRadius: BorderRadius.circular(20), border: Border.all(color: _line)), child: Row(children: [const Icon(Icons.tune_rounded, color: _primary), const SizedBox(width: 8), Expanded(child: Text('图片参数 · $_imageAspectRatio · ${_qualityLabel(_imageQuality)} · $_imageCount 张 · ${_enhanceImagePrompt ? '润色开' : '润色关'}', style: const TextStyle(color: _text, fontWeight: FontWeight.w900))), const Icon(Icons.keyboard_arrow_up_rounded, color: _muted)]))),
         ]),
       );
 
@@ -334,6 +384,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text('清晰度', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 10),
                 Wrap(spacing: 8, runSpacing: 8, children: _qualityOptions.map((v) => _choice(_qualityLabel(v), _imageQuality == v, () => apply(() async { _imageQuality = v; await _saveAllSettings(); }))).toList()),
+                const SizedBox(height: 18),
+                const Text('生成数量', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 10),
+                Wrap(spacing: 8, runSpacing: 8, children: _imageCountOptions.map((v) => _choice('$v 张', _imageCount == v, () => apply(() async { _imageCount = v; await _saveAllSettings(); }))).toList()),
+                const SizedBox(height: 6),
+                const Text('选择多张时会自动连续生成，并保留已成功的图片。', style: TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 14),
                 SwitchListTile.adaptive(contentPadding: EdgeInsets.zero, title: const Text('LLM 润色提示词后再生成', style: TextStyle(color: _text, fontWeight: FontWeight.w900)), subtitle: const Text('开启后会把比例、尺寸、画质一起交给聊天模型润色提示词', style: TextStyle(color: _muted)), activeColor: _primary, value: _enhanceImagePrompt, onChanged: (v) => apply(() async { _enhanceImagePrompt = v; await _saveAllSettings(); })),
                 const SizedBox(height: 10),
@@ -353,6 +409,20 @@ class _HomeScreenState extends State<HomeScreen> {
     return Align(alignment: user ? Alignment.centerRight : Alignment.centerLeft, child: Container(constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86), margin: const EdgeInsets.symmetric(vertical: 6), padding: const EdgeInsets.all(12), decoration: BoxDecoration(gradient: user ? const LinearGradient(colors: [_primary, _primary2]) : null, color: user ? null : Colors.white.withOpacity(.82), borderRadius: BorderRadius.only(topLeft: const Radius.circular(22), topRight: const Radius.circular(22), bottomLeft: Radius.circular(user ? 22 : 8), bottomRight: Radius.circular(user ? 8 : 22)), border: Border.all(color: user ? Colors.white.withOpacity(.55) : _line), boxShadow: [BoxShadow(color: _primary.withOpacity(0.10), blurRadius: 18, offset: const Offset(0, 8))]), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [if (msg.type == MessageType.image) _imageMessage(msg.content) else MarkdownBody(data: msg.content.isEmpty && msg.isGenerating ? '●' : msg.content, styleSheet: MarkdownStyleSheet(p: TextStyle(color: user ? Colors.white : _text, height: 1.45, fontWeight: FontWeight.w600))), if (msg.localFilePath != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.localFilePath!.split('/').last}', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12)))])));
   }
 
+  Widget _attachedPreviewStrip() => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [const Icon(Icons.image_rounded, color: _cyan), const SizedBox(width: 8), Expanded(child: Text('参考图 ${_attachedFiles.length} / $_maxReferenceImages，可继续追加或单张删除', style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)), TextButton(onPressed: _clearAttachedImages, child: const Text('清空'))]),
+          const SizedBox(height: 6),
+          SizedBox(height: 78, child: ListView.separated(scrollDirection: Axis.horizontal, itemCount: _attachedFiles.length + (_attachedFiles.length < _maxReferenceImages ? 1 : 0), separatorBuilder: (_, __) => const SizedBox(width: 8), itemBuilder: (_, i) {
+            if (i == _attachedFiles.length) return InkWell(onTap: _pickImage, borderRadius: BorderRadius.circular(16), child: Container(width: 74, decoration: BoxDecoration(color: Colors.white.withOpacity(.72), borderRadius: BorderRadius.circular(16), border: Border.all(color: _line)), child: const Icon(Icons.add_photo_alternate_rounded, color: _primary)));
+            return Stack(children: [ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.file(_attachedFiles[i], width: 74, height: 78, fit: BoxFit.cover)), Positioned(top: 3, right: 3, child: InkWell(onTap: () => _removeAttachedImage(i), child: Container(width: 22, height: 22, decoration: BoxDecoration(color: Colors.black.withOpacity(.55), shape: BoxShape.circle), child: const Icon(Icons.close_rounded, color: Colors.white, size: 16))))]);
+          })),
+        ]),
+      );
+
   Widget _imageMessage(String url) {
     final isData = url.startsWith('data:image') && url.contains('base64,');
     final image = isData ? Image.memory(base64Decode(url.substring(url.indexOf('base64,') + 7)), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('图片解析失败', style: TextStyle(color: Colors.redAccent))) : Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('图片加载失败', style: TextStyle(color: Colors.redAccent)));
@@ -360,7 +430,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _composer() => _glassPanel(margin: const EdgeInsets.fromLTRB(12, 4, 12, 12), padding: const EdgeInsets.all(10), radius: 28, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        if (_attachedFile != null) Container(margin: const EdgeInsets.only(bottom: 8), decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))), child: ListTile(dense: true, leading: const Icon(Icons.image_rounded, color: _cyan), title: Text(_attachedFile!.path.split('/').last, style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() { _attachedFile = null; _attachedBase64 = null; }), icon: const Icon(Icons.close, color: _primary)))),
+        if (_attachedFiles.isNotEmpty) Container(margin: const EdgeInsets.only(bottom: 8), decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))), child: ListTile(dense: true, leading: const Icon(Icons.image_rounded, color: _cyan), title: Text(_attachedFile!.path.split('/').last, style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() { _attachedFile = null; _attachedBase64 = null; }), icon: const Icon(Icons.close, color: _primary)))),
         Row(children: [_smallButton(Icons.add_photo_alternate_rounded, _pickImage, _cyan), const SizedBox(width: 6), _smallButton(_forceImage ? Icons.brush_rounded : Icons.auto_awesome_outlined, () => setState(() => _forceImage = !_forceImage), _forceImage ? _primary : _primary2), const SizedBox(width: 6), Expanded(child: TextField(controller: _input, style: const TextStyle(color: _text, fontWeight: FontWeight.w700), minLines: 1, maxLines: 5, decoration: InputDecoration(hintText: _forceImage ? '描述要生成或编辑的画面…' : '输入聊天内容，或描述想生成的图片…', hintStyle: const TextStyle(color: _muted), filled: true, fillColor: Colors.white.withOpacity(.68), border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none), contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12)))), const SizedBox(width: 6), _smallButton(Icons.arrow_upward_rounded, _loading ? null : _send, _primary)]),
       ]));
 
