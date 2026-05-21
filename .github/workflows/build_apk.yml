@@ -58,8 +58,14 @@ jobs:
         run: |
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
-          BUILD_NUMBER=${APP_VERSION##*+}
-          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER"
+          PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
+          # Use GitHub run number as versionCode in CI so every APK can upgrade the previous one.
+          # Keep pubspec build number only as local/manual fallback.
+          BUILD_NUMBER=${GITHUB_RUN_NUMBER:-$PUBSPEC_BUILD_NUMBER}
+          if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
+          fi
+          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Upload APK Artifact
