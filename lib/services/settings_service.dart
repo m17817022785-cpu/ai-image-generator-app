@@ -33,7 +33,7 @@ class SettingsService {
     await prefs.setString(_keyImageBaseUrl, (imageBaseUrl ?? '').trim());
     await prefs.setString(_keyChatModel, chatModel);
     await prefs.setString(_keyImageModel, imageModel);
-    await prefs.setString(_keyImageEditModel, (imageEditModel ?? 'gpt-image-1').trim());
+    await prefs.setString(_keyImageEditModel, (imageEditModel ?? '').trim());
     await prefs.setString(_keyImageAspectRatio, imageAspectRatio.trim().isEmpty ? '1:1' : imageAspectRatio.trim());
     await prefs.setString(_keyImageQuality, imageQuality.trim().isEmpty ? 'auto' : imageQuality.trim());
     await prefs.setBool(_keyEnhanceImagePrompt, enhanceImagePrompt);
@@ -42,17 +42,19 @@ class SettingsService {
 
   Future<Map<String, String>> getSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final baseUrl = prefs.getString(_keyBaseUrl) ?? 'https://api.openai.com/v1';
+    final baseUrl = prefs.getString(_keyBaseUrl) ?? '';
     final imageBaseUrl = prefs.getString(_keyImageBaseUrl) ?? '';
     final imageApiKey = prefs.getString(_keyImageApiKey) ?? '';
     return {
       'apiKey': prefs.getString(_keyApiKey) ?? '',
+      // 为空表示图片工具令牌沿用聊天令牌，兼容老版本设置。
       'imageApiKey': imageApiKey,
       'baseUrl': baseUrl,
+      // 为空表示图片工具接口沿用聊天接口，兼容老版本设置。
       'imageBaseUrl': imageBaseUrl,
-      'chatModel': prefs.getString(_keyChatModel) ?? 'gpt-4o-mini',
-      'imageModel': prefs.getString(_keyImageModel) ?? 'dall-e-3',
-      'imageEditModel': prefs.getString(_keyImageEditModel) ?? 'gpt-image-1',
+      'chatModel': prefs.getString(_keyChatModel) ?? '',
+      'imageModel': prefs.getString(_keyImageModel) ?? '',
+      'imageEditModel': prefs.getString(_keyImageEditModel) ?? '',
       'imageAspectRatio': prefs.getString(_keyImageAspectRatio) ?? '1:1',
       'imageQuality': prefs.getString(_keyImageQuality) ?? 'auto',
       'enhanceImagePrompt': (prefs.getBool(_keyEnhanceImagePrompt) ?? true).toString(),
