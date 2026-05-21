@@ -45,9 +45,52 @@ class ApiService {
     return Uri.parse('$normalized$path');
   }
 
+  Uri _modelsEndpoint(String baseUrl) {
+    var normalized = _normalizeBaseUrl(baseUrl);
+    final uri = Uri.tryParse(normalized);
+    final path = (uri?.path ?? '').toLowerCase();
+    const suffixes = ['/chat/completions', '/completions', '/images/generations', '/images/edits', '/chat'];
+    for (final suffix in suffixes) {
+      if (path == suffix || path.endsWith(suffix)) {
+        normalized = normalized.substring(0, normalized.length - suffix.length);
+        break;
+      }
+    }
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return Uri.parse('$normalized/models');
+  }
+
   bool _useChatImageEndpoint(String baseUrl) {
     final path = Uri.tryParse(_normalizeBaseUrl(baseUrl))?.path.toLowerCase() ?? '';
     return path == '/chat' || path.endsWith('/chat/completions') || path.endsWith('/completions');
+  }
+
+  Future<List<String>> fetchModels({required String apiKey, required String baseUrl}) async {
+    final url = _modelsEndpoint(baseUrl);
+    _log.info('models', '开始获取服务商模型', 'GET /models', details: {'endpoint': url.toString()});
+    final response = await http.get(url, headers: {'Accept': 'application/json', if (apiKey.trim().isNotEmpty) 'Authorization': 'Bearer ${apiKey.trim()}'});
+    final bodyText = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('获取模型失败 ${response.statusCode}: ${_extractError(bodyText)}');
+    final parsed = _decodeJsonObject(bodyText, category: 'models', title: '获取服务商模型响应解析失败', endpoint: url.toString(), model: '', statusCode: response.statusCode);
+    final rawModels = parsed['data'];
+    final models = <String>[];
+    if (rawModels is List) {
+      for (final item in rawModels) {
+        if (item is Map && item['id'] != null) models.add(item['id'].toString());
+        if (item is String) models.add(item);
+      }
+    } else if (parsed['models'] is List) {
+      for (final item in parsed['models'] as List) {
+        if (item is Map && item['id'] != null) models.add(item['id'].toString());
+        if (item is String) models.add(item);
+      }
+    }
+    final unique = models.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
+    if (unique.isEmpty) throw Exception('服务商没有返回可识别的模型列表。Endpoint: $url');
+    _log.success('models', '服务商模型获取完成', '${unique.length} models', details: {'endpoint': url.toString(), 'models': unique});
+    return unique;
   }
 
   String normalizeChatModel(String model) {
@@ -154,7 +197,7 @@ class ApiService {
     const systemPrompt = '''你是 Luna AI 的工具决策器。只能输出 JSON，不要 Markdown。
 action 只能是 direct_answer、text_to_image、image_to_image。
 JSON：{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图片工具使用的优化提示词","reply":"给用户看的简短回复","size":"1024x1024","quality":"auto|standard|hd|low|medium|high"}
-规则：图片分析/问答/写文案使用 direct_answer；无图生成新图使用 text_to_image；有上传图并要求修改/重绘/换风格/修复/参考图生成使用 image_to_image；没有上传图不要 image_to_image。size 默认 1024x1024，横图可 1792x1024，竖图可 1024x1792。quality 默认 auto，高清可 hd/high。''';
+规则：\n1. 图片分析、图片内容描述、看图问答、识别画面、询问建议、写文案、让你解释图片时，必须使用 direct_answer，即使用户上传了图片也不要调用 image_to_image。\n2. 只有用户明确要求生成新图、画一张图、出图、重绘、换风格、修复、编辑、把参考图做成新画面时，才调用图片工具。\n3. 无上传图且明确要生成图片时使用 text_to_image。\n4. 有上传图且明确要求参考/修改/重绘/换风格/修复/生成新图时使用 image_to_image。注意：参考图只是内容/风格参考，size 表示返回图片画幅。\n5. 没有上传图不要 image_to_image。\nsize 默认 1024x1024，横图可 1792x1024，竖图可 1024x1792。quality 默认 auto，高清可 hd/high。''';
     _log.info('tool_decision', '开始 LLM 工具决策', 'POST /chat/completions', details: {'endpoint': url.toString(), 'model': actualModel, 'hasImage': hasImage, 'userText': userText});
     final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userText.isEmpty ? '请根据上传图片继续处理' : userText, base64Image)], 'stream': false}));
     final bodyText = utf8.decode(response.bodyBytes);
@@ -214,14 +257,52 @@ JSON：{"action":"direct_answer|text_to_image|image_to_image","prompt":"给图�
   Future<String> refineImagePrompt({required String userText, required String? base64Image, required String apiKey, required String baseUrl, required String model, required String aspectRatio, required String size, required String quality, required bool isEdit}) async {
     final url = _endpoint(baseUrl, '/chat/completions');
     final actualModel = normalizeChatModel(model);
-    const systemPrompt = '''你是专业图片生成提示词优化器。请把用户要求润色为更适合图片生成/图片编辑模型的提示词。只能输出最终提示词，不要 Markdown，不要解释。保留用户核心意图，补充构图、光线、镜头、质感、细节、色彩、背景和氛围。图生图/编辑时强调参考原图一致性和需要修改的部分，不要编造冲突元素。''';
+    const systemPrompt = '''你是专业图片生成提示词优化器。请把用户要求整理为更适合图片生成/图片编辑模型的提示词。只能输出最终提示词，不要 Markdown，不要解释。\n规则：\n1. 保留用户核心意图，可补充构图、光线、镜头、质感、细节、色彩、背景和氛围。\n2. 图生图/参考图生成时，只把上传图片称为“参考图”，把图中人物称为“参考图中的人物 / 主体 / 角色形象”，强调参考其面部特征、发型、服装、姿态、气质和整体视觉一致性。\n3. 不要主动判断或补充年龄、性别、身份；不要主动添加 young、adult、teen、girl、boy、child、少女、女孩、男孩、成年、年轻等年龄或身份词，除非用户原文明确要求。\n4. 输出比例由目标尺寸控制，例如 16:9、9:16、1:1；不要说修改参考图本身的比例。\n5. 不要编造与参考图冲突的人物设定。''';
     final userInstruction = '原始要求：$userText\n生成模式：${isEdit ? '图生图/图片编辑' : '文生图'}\n目标比例：$aspectRatio\n目标尺寸：$size\n清晰度/质量：${_qualityLabel(quality)}\n请润色为高质量图片生成提示词。';
     final response = await http.post(url, headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer ${apiKey.trim()}'}, body: jsonEncode({'model': actualModel, 'messages': [{'role': 'system', 'content': systemPrompt}, _imageContentMessage('user', userInstruction, base64Image)], 'stream': false}));
     final bodyText = utf8.decode(response.bodyBytes);
     if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('提示词润色失败 ${response.statusCode}: ${_extractError(bodyText)}');
     final parsed = _decodeJsonObject(bodyText, category: 'prompt_refine', title: 'LLM 润色提示词响应解析失败', endpoint: url.toString(), model: actualModel, statusCode: response.statusCode);
     final refined = parsed['choices']?[0]?['message']?['content']?.toString().trim() ?? '';
-    return refined.isEmpty ? userText : refined;
+    return _neutralizeAutoAddedIdentityTerms(refined.isEmpty ? userText : refined, originalText: userText, hasReferenceImage: base64Image != null && base64Image.isNotEmpty);
+  }
+
+  bool _originalMentionsIdentityOrAge(String text) {
+    final value = text.toLowerCase();
+    const terms = ['young', 'adult', 'teen', 'teenager', 'girl', 'boy', 'child', 'woman', 'man', 'lady', '少女', '女孩', '男孩', '儿童', '小孩', '成年', '年轻', '女性', '男性', '女人', '男人'];
+    return terms.any(value.contains);
+  }
+
+  String _neutralizeAutoAddedIdentityTerms(String prompt, {required String originalText, required bool hasReferenceImage}) {
+    if (!hasReferenceImage || _originalMentionsIdentityOrAge(originalText)) return prompt.trim();
+    var value = prompt;
+    final replacements = <RegExp, String>{
+      RegExp(r'\byoung\s+woman\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\byoung\s+girl\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\badult\s+woman\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\badult\s+man\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\bteen(?:ager)?\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\bgirl\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\bboy\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\bwoman\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\bman\b', caseSensitive: false): 'the person in the reference image',
+      RegExp(r'\byouthful\b', caseSensitive: false): 'natural',
+    };
+    replacements.forEach((pattern, replacement) {
+      value = value.replaceAll(pattern, replacement);
+    });
+    value = value
+        .replaceAll('年轻女性', '参考图中的人物')
+        .replaceAll('年轻男子', '参考图中的人物')
+        .replaceAll('成年女性', '参考图中的人物')
+        .replaceAll('成年男性', '参考图中的人物')
+        .replaceAll('少女', '参考图中的人物')
+        .replaceAll('女孩', '参考图中的人物')
+        .replaceAll('男孩', '参考图中的人物')
+        .replaceAll('年轻', '自然')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return value;
   }
 
   Stream<String> generateChatStream(List<Message> history, String apiKey, String baseUrl, String model) async* {
