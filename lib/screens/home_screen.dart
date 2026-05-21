@@ -20,25 +20,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _bgTop = Color(0xFF111827);
-  static const _bgBottom = Color(0xFF050816);
-  static const _surface = Color(0xFF182033);
-  static const _surface2 = Color(0xFF222B3F);
-  static const _primary = Color(0xFF7C3AED);
-  static const _secondary = Color(0xFF06B6D4);
-  static const _success = Color(0xFF10B981);
-  static const _text = Color(0xFFF8FAFC);
-  static const _muted = Color(0xFFCBD5E1);
+  static const _bgTop = Color(0xFFFFF1F8);
+  static const _bgBottom = Color(0xFFEDE7FF);
+  static const _card = Color(0xFFFFFBFE);
+  static const _card2 = Color(0xFFFFE4F1);
+  static const _primary = Color(0xFFFF6FB1);
+  static const _primary2 = Color(0xFFB388FF);
+  static const _mint = Color(0xFF62D6D4);
+  static const _text = Color(0xFF3E244D);
+  static const _muted = Color(0xFF8B6A9D);
+  static const _line = Color(0xFFFFB8D8);
 
-  final _apiService = ApiService();
-  final _settingsService = SettingsService();
+  final _api = ApiService();
+  final _settings = SettingsService();
   final _log = DebugLogService.instance;
-  final _inputController = TextEditingController();
-  final _scrollController = ScrollController();
+  final _input = TextEditingController();
+  final _scroll = ScrollController();
   final List<Message> _messages = [];
 
-  bool _isLoading = false;
+  bool _loading = false;
   bool _forceImage = false;
+  bool _enhanceImagePrompt = true;
   File? _attachedFile;
   String? _attachedBase64;
 
@@ -49,11 +51,34 @@ class _HomeScreenState extends State<HomeScreen> {
   String _chatModel = 'gpt-4o-mini';
   String _imageModel = 'dall-e-3';
   String _imageEditModel = 'gpt-image-1';
+  String _imageAspectRatio = '1:1';
+  String _imageQuality = 'auto';
+
+  static const _aspectOptions = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+  static const _qualityOptions = ['auto', 'standard', 'hd', 'low', 'medium', 'high'];
 
   String get _effectiveImageApiKey => _imageApiKey.trim().isEmpty ? _apiKey : _imageApiKey.trim();
   String get _effectiveImageBaseUrl => _imageBaseUrl.trim().isEmpty ? _baseUrl : _imageBaseUrl.trim();
-  String get _effectiveImageModel => _apiService.normalizeImageModel(_imageModel);
-  String get _effectiveImageEditModel => _apiService.normalizeImageEditModel(_imageEditModel);
+  String get _effectiveImageModel => _api.normalizeImageModel(_imageModel);
+  String get _effectiveImageEditModel => _api.normalizeImageEditModel(_imageEditModel);
+  String get _selectedSize => _sizeForRatio(_imageAspectRatio);
+
+  String _sizeForRatio(String ratio) => switch (ratio) {
+        '16:9' => '1792x1024',
+        '9:16' => '1024x1792',
+        '4:3' => '1024x768',
+        '3:4' => '768x1024',
+        _ => '1024x1024',
+      };
+
+  String _qualityLabel(String value) => switch (value) {
+        'standard' => '标准',
+        'hd' => 'HD',
+        'low' => '低',
+        'medium' => '中',
+        'high' => '高',
+        _ => '自动',
+      };
 
   @override
   void initState() {
@@ -63,782 +88,458 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _inputController.dispose();
-    _scrollController.dispose();
+    _input.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
   Future<void> _loadSettings() async {
     try {
-      final settings = await _settingsService.getSettings();
+      final s = await _settings.getSettings();
       if (!mounted) return;
       setState(() {
-        _apiKey = settings['apiKey'] ?? '';
-        _imageApiKey = settings['imageApiKey'] ?? '';
-        _baseUrl = settings['baseUrl'] ?? 'https://api.openai.com/v1';
-        _imageBaseUrl = settings['imageBaseUrl'] ?? '';
-        _chatModel = settings['chatModel'] ?? 'gpt-4o-mini';
-        _imageModel = settings['imageModel'] ?? 'dall-e-3';
-        _imageEditModel = settings['imageEditModel'] ?? 'gpt-image-1';
-      });
-      _log.info('settings', '设置读取成功', '已加载 API 配置', details: {
-        'hasChatKey': _apiKey.isNotEmpty,
-        'hasImageKey': _imageApiKey.isNotEmpty,
-        'baseUrl': _baseUrl,
-        'imageBaseUrl': _imageBaseUrl,
-        'chatModel': _chatModel,
-        'imageModel': _imageModel,
-        'imageEditModel': _imageEditModel,
+        _apiKey = s['apiKey'] ?? '';
+        _imageApiKey = s['imageApiKey'] ?? '';
+        _baseUrl = s['baseUrl'] ?? 'https://api.openai.com/v1';
+        _imageBaseUrl = s['imageBaseUrl'] ?? '';
+        _chatModel = s['chatModel'] ?? 'gpt-4o-mini';
+        _imageModel = s['imageModel'] ?? 'dall-e-3';
+        _imageEditModel = s['imageEditModel'] ?? 'gpt-image-1';
+        _imageAspectRatio = _aspectOptions.contains(s['imageAspectRatio']) ? s['imageAspectRatio']! : '1:1';
+        _imageQuality = _qualityOptions.contains(s['imageQuality']) ? s['imageQuality']! : 'auto';
+        _enhanceImagePrompt = (s['enhanceImagePrompt'] ?? 'true') == 'true';
       });
     } catch (e) {
-      _log.error('settings', '读取设置失败', e.toString());
-      _snack('读取设置失败: $e');
+      _snack('读取设置失败：$e');
     }
   }
 
+  Future<void> _saveAllSettings() async {
+    await _settings.saveSettings(
+      apiKey: _apiKey,
+      imageApiKey: _imageApiKey,
+      baseUrl: _baseUrl,
+      imageBaseUrl: _imageBaseUrl,
+      chatModel: _chatModel,
+      imageModel: _imageModel,
+      imageEditModel: _imageEditModel,
+      imageAspectRatio: _imageAspectRatio,
+      imageQuality: _imageQuality,
+      enhanceImagePrompt: _enhanceImagePrompt,
+    );
+  }
+
+  Future<void> _pickImage() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75);
+    if (picked == null) return;
+    final file = File(picked.path);
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _attachedFile = file;
+      _attachedBase64 = base64Encode(bytes);
+    });
+  }
+
   Future<void> _send() async {
-    final text = _inputController.text.trim();
-    final attachedFile = _attachedFile;
-    final attachedBase64 = _attachedBase64;
-    if (text.isEmpty && attachedFile == null) return;
-    if (_apiKey.isEmpty) {
-      _snack('请先在设置中配置 API Key');
+    final text = _input.text.trim();
+    final file = _attachedFile;
+    final b64 = _attachedBase64;
+    if (text.isEmpty && file == null) return;
+    if (_apiKey.trim().isEmpty) {
+      _snack('请先配置聊天 API Key');
       return;
     }
 
-    final content = text.isEmpty ? (attachedFile == null ? '' : '请根据这张图片继续处理') : text;
-    final userMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      role: 'user',
-      content: content,
-      localFilePath: attachedFile?.path,
-      base64Image: attachedBase64,
-    );
+    final content = text.isEmpty ? '请根据这张图片继续处理' : text;
+    final user = Message(id: DateTime.now().microsecondsSinceEpoch.toString(), role: 'user', content: content, localFilePath: file?.path, base64Image: b64);
 
     setState(() {
-      _messages.add(userMessage);
-      _inputController.clear();
+      _messages.add(user);
+      _input.clear();
       _attachedFile = null;
       _attachedBase64 = null;
-      _isLoading = true;
+      _loading = true;
     });
     _scrollBottom();
 
-    final normalizedChatModel = _apiService.normalizeChatModel(_chatModel);
-    final normalizedImageModel = _effectiveImageModel;
-    final normalizedImageEditModel = _effectiveImageEditModel;
-
-    _log.info('user_input', '用户发送消息', _forceImage ? '强制图片工具模式' : '自动决策模式', details: {
+    _log.info('user_input', '用户发送消息', _forceImage ? '图片工具模式' : '自动模式', details: {
       'text': content,
-      'hasImage': attachedFile != null,
-      'forceImageTool': _forceImage,
-      'imagePath': attachedFile?.path,
-      'chatBaseUrl': _baseUrl,
-      'imageBaseUrl': _effectiveImageBaseUrl,
-      'rawChatModel': _chatModel,
-      'actualChatModel': normalizedChatModel,
-      'rawImageModel': _imageModel,
-      'actualImageModel': normalizedImageModel,
-      'rawImageEditModel': _imageEditModel,
-      'actualImageEditModel': normalizedImageEditModel,
+      'hasImage': file != null,
+      'aspectRatio': _imageAspectRatio,
+      'size': _selectedSize,
+      'quality': _imageQuality,
+      'enhanceImagePrompt': _enhanceImagePrompt,
     });
 
     try {
       if (_forceImage) {
-        await _replyImageTool(prompt: content, imageFile: attachedFile);
+        await _replyImage(prompt: content, imageFile: file, base64Image: b64, quality: _imageQuality);
       } else {
-        await _replyAuto(userMessage: userMessage, imageFile: attachedFile, base64Image: attachedBase64);
+        await _replyAuto(userMessage: user, imageFile: file, base64Image: b64);
       }
     } catch (e) {
-      _log.error('send', '发送处理失败', e.toString());
-      _snack('发送失败，详情请查看控制台');
+      _log.error('send', '发送失败', e.toString());
+      _snack('发送失败：$e');
     } finally {
       if (!mounted) return;
       setState(() {
+        _loading = false;
         _forceImage = false;
-        _isLoading = false;
       });
       _scrollBottom();
     }
   }
 
-  Future<void> _replyAuto({
-    required Message userMessage,
-    required File? imageFile,
-    required String? base64Image,
-  }) async {
-    final thinking = Message(
-      id: '${DateTime.now().millisecondsSinceEpoch + 1}',
-      role: 'assistant',
-      content: '正在判断是否需要调用图片工具…',
-      isGenerating: true,
-    );
-    setState(() => _messages.add(thinking));
-    _scrollBottom();
+  Future<void> _replyAuto({required Message userMessage, required File? imageFile, required String? base64Image}) async {
+    final placeholder = _assistantPlaceholder('小 Luna 正在判断要聊天还是画画…');
+    final decision = await _api.decideTool(userText: userMessage.content, base64Image: base64Image, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel);
 
-    final decision = await _apiService.decideTool(
-      userText: userMessage.content,
-      base64Image: base64Image,
-      apiKey: _apiKey,
-      baseUrl: _baseUrl,
-      model: _chatModel,
-    );
-
-    if (!mounted) return;
     if (decision.action == ToolAction.directAnswer) {
-      setState(() {
-        thinking.content = '';
-        thinking.isGenerating = true;
-      });
-      final model = _apiService.normalizeChatModel(_chatModel);
-      final stream = _apiService.generateChatStream(_messages.sublist(0, _messages.length - 1), _apiKey, _baseUrl, model);
+      placeholder.content = '';
+      final stream = _api.generateChatStream(_messages.where((m) => m.id != placeholder.id).toList(), _apiKey, _baseUrl, _chatModel);
       await for (final chunk in stream) {
         if (!mounted) return;
-        setState(() => thinking.content += chunk);
+        setState(() => placeholder.content += chunk);
         _scrollBottom();
       }
       if (!mounted) return;
       setState(() {
-        if (thinking.content.trim().isEmpty) {
-          thinking.content = decision.reply.isEmpty ? '我理解了，但暂时没有生成可展示的回复。' : decision.reply;
-        }
-        thinking.isGenerating = false;
+        placeholder.content = placeholder.content.trim().isEmpty ? (decision.reply.isEmpty ? '我理解啦～' : decision.reply) : placeholder.content;
+        placeholder.isGenerating = false;
       });
       return;
     }
 
-    setState(() {
-      thinking.content = decision.action == ToolAction.imageToImage ? 'AI 决定调用图生图工具，正在编辑图片…' : 'AI 决定调用文生图工具，正在生成图片…';
-    });
-
-    await _finishImageToolMessage(
-      placeholder: thinking,
+    await _finishImageMessage(
+      placeholder: placeholder,
       prompt: decision.prompt.isEmpty ? userMessage.content : decision.prompt,
       imageFile: decision.action == ToolAction.imageToImage ? imageFile : null,
-      size: decision.size,
+      base64Image: base64Image,
+      quality: _imageQuality == 'auto' ? decision.quality : _imageQuality,
     );
   }
 
-  Future<void> _replyImageTool({required String prompt, required File? imageFile}) async {
-    final placeholder = Message(
-      id: '${DateTime.now().millisecondsSinceEpoch + 1}',
-      role: 'assistant',
-      content: imageFile == null ? '正在根据你的描述生成图片…' : '正在根据参考图生成/编辑图片…',
-      isGenerating: true,
-    );
-    setState(() => _messages.add(placeholder));
+  Future<void> _replyImage({required String prompt, required File? imageFile, required String? base64Image, required String quality}) async {
+    final placeholder = _assistantPlaceholder(imageFile == null ? '魔法画笔启动中…' : '正在根据参考图施展魔法…');
+    await _finishImageMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, base64Image: base64Image, quality: quality);
+  }
+
+  Message _assistantPlaceholder(String text) {
+    final msg = Message(id: '${DateTime.now().microsecondsSinceEpoch + 1}', role: 'assistant', content: text, isGenerating: true);
+    setState(() => _messages.add(msg));
     _scrollBottom();
-
-    await _finishImageToolMessage(placeholder: placeholder, prompt: prompt, imageFile: imageFile, size: '1024x1024');
+    return msg;
   }
 
-  Future<void> _finishImageToolMessage({
-    required Message placeholder,
-    required String prompt,
-    required File? imageFile,
-    required String size,
-  }) async {
-    final url = imageFile == null
-        ? await _apiService.generateImage(prompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: size)
-        : await _apiService.editImage(prompt, imageFile, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: size);
+  Future<void> _finishImageMessage({required Message placeholder, required String prompt, required File? imageFile, required String? base64Image, required String quality}) async {
+    var finalPrompt = prompt;
+    if (_enhanceImagePrompt) {
+      if (mounted) setState(() => placeholder.content = '小 Luna 正在润色咒语提示词…');
+      finalPrompt = await _api.refineImagePrompt(userText: prompt, base64Image: base64Image, apiKey: _apiKey, baseUrl: _baseUrl, model: _chatModel, aspectRatio: _imageAspectRatio, size: _selectedSize, quality: quality, isEdit: imageFile != null);
+    }
+    if (mounted) setState(() => placeholder.content = imageFile == null ? '正在生成 $_imageAspectRatio 可爱画面…' : '正在编辑 $_imageAspectRatio 参考图…');
+
+    final image = imageFile == null
+        ? await _api.generateImage(finalPrompt, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageModel, size: _selectedSize, quality: quality)
+        : await _api.editImage(finalPrompt, imageFile, _effectiveImageApiKey, _effectiveImageBaseUrl, _effectiveImageEditModel, size: _selectedSize, quality: quality);
+
     if (!mounted) return;
     setState(() {
       final index = _messages.indexWhere((m) => m.id == placeholder.id);
-      if (index >= 0) {
-        _messages[index] = Message(id: placeholder.id, role: 'assistant', content: url, type: MessageType.image);
-      }
+      if (index >= 0) _messages[index] = Message(id: placeholder.id, role: 'assistant', content: image, type: MessageType.image);
     });
-  }
-
-  Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
-    if (picked == null) return;
-    final bytes = await File(picked.path).readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _attachedFile = File(picked.path);
-      _attachedBase64 = base64Encode(bytes);
-    });
-    _log.info('attachment', '已选择图片', picked.name, details: {'path': picked.path, 'sizeBytes': bytes.length});
   }
 
   Future<void> _saveImage(String url) async {
     try {
-      _snack('正在保存图片...');
+      _snack('正在保存图片…');
       await ImageSaveService.saveNetworkImage(url);
       _snack('图片已保存到相册');
     } catch (e) {
-      _log.error('image_save', '保存图片失败', e.toString());
-      _snack('保存失败: $e');
+      _snack('保存失败：$e');
     }
   }
 
   void _scrollBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
-      );
+      if (!_scroll.hasClients) return;
+      _scroll.animateTo(_scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 240), curve: Curves.easeOutCubic);
     });
   }
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: _surface2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating, backgroundColor: _primary));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
       backgroundColor: _bgBottom,
       appBar: AppBar(
-        titleSpacing: 18,
-        backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Row(
-          children: [
-            _gradientBox(child: const Icon(Icons.auto_awesome, color: Colors.white, size: 19), size: 34, radius: 12),
-            const SizedBox(width: 10),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Luna AI', style: TextStyle(color: _text, fontSize: 18, fontWeight: FontWeight.w800)),
-                Text('Agent · Tools · Image', style: TextStyle(color: _muted, fontSize: 11)),
-              ],
-            ),
-          ],
-        ),
+        centerTitle: false,
+        backgroundColor: Colors.transparent,
+        title: const Text('Luna 二次元画室', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
         actions: [
-          _topButton(Icons.terminal_rounded, _openConsole),
-          const SizedBox(width: 6),
-          _topButton(Icons.delete_outline, _confirmClear),
-          const SizedBox(width: 6),
-          _topButton(Icons.settings_rounded, _openSettings),
-          const SizedBox(width: 12),
+          _roundIcon(Icons.terminal_rounded, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugConsoleScreen()))),
+          _roundIcon(Icons.settings_rounded, _openSettings),
+          const SizedBox(width: 8),
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bgTop, _bgBottom]),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _heroPanel(),
-              Expanded(child: _messages.isEmpty ? _emptyState() : _messageList()),
-              if (_isLoading) _loadingBar(),
-              _composer(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _topButton(IconData icon, VoidCallback onTap) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: IconButton(
-          onPressed: onTap,
-          icon: Icon(icon, color: _text, size: 21),
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.white.withOpacity(0.08),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: Colors.white.withOpacity(0.08))),
-          ),
-        ),
-      );
-
-  Widget _heroPanel() => Container(
-        margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-        padding: const EdgeInsets.all(14),
-        decoration: _glassDecoration(24),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _forceImage ? '图片工具模式：无图文生图，有图图生图' : '自动模式：LLM 会判断是否调用图片工具',
-                    style: const TextStyle(color: _text, fontSize: 15, fontWeight: FontWeight.w800),
-                  ),
-                ),
-                _pill(_apiKey.isEmpty ? Icons.key_off_rounded : Icons.verified_user_rounded, _apiKey.isEmpty ? '未配置' : '已配置',
-                    _apiKey.isEmpty ? Colors.orangeAccent : _success, _openSettings),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _quick(Icons.auto_awesome_rounded, '自动', 'AI 决策', _secondary, () => setState(() => _forceImage = false))),
-                const SizedBox(width: 10),
-                Expanded(child: _quick(Icons.brush_rounded, '图片工具', '生图/图生图', _primary, () => setState(() => _forceImage = true))),
-                const SizedBox(width: 10),
-                Expanded(child: _quick(Icons.add_photo_alternate_rounded, '参考图', '上传图片', _success, _pickImage)),
-              ],
-            ),
-          ],
-        ),
-      );
-
-  Widget _quick(IconData icon, String title, String sub, Color color, VoidCallback onTap) => InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-          decoration: BoxDecoration(color: _surface.withOpacity(0.72), borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.white10)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Container(width: 34, height: 34, decoration: BoxDecoration(color: color.withOpacity(0.16), borderRadius: BorderRadius.circular(13)), child: Icon(icon, color: color, size: 19)),
-            const SizedBox(height: 8),
-            Text(title, style: const TextStyle(color: _text, fontSize: 13, fontWeight: FontWeight.w800)),
-            Text(sub, style: const TextStyle(color: _muted, fontSize: 11)),
-          ]),
-        ),
-      );
-
-  Widget _emptyState() {
-    final suggestions = ['总结一下今天的待办', '画一张星空下的未来城市', '上传图片后说：把它改成动漫风'];
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [_primary.withOpacity(0.20), _secondary.withOpacity(0.12)]),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.white10),
-          ),
-          child: Column(children: [
-            _gradientBox(child: const Icon(Icons.auto_awesome, color: Colors.white, size: 38), size: 74, radius: 40),
-            const SizedBox(height: 18),
-            const Text('今天想创造什么？', textAlign: TextAlign.center, style: TextStyle(color: _text, fontSize: 24, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 8),
-            const Text('多模态模型负责理解意图；图片工具负责文生图和图生图。', textAlign: TextAlign.center, style: TextStyle(color: _muted, fontSize: 14, height: 1.5)),
-            const SizedBox(height: 18),
-            OutlinedButton.icon(
-              onPressed: _openSettings,
-              icon: const Icon(Icons.settings_rounded, color: _text),
-              label: const Text('打开 API 设置', style: TextStyle(color: _text, fontWeight: FontWeight.w700)),
-            ),
-          ]),
-        ),
-        const SizedBox(height: 18),
-        const Text('试试这些灵感', style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
-        ...suggestions.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: Colors.white.withOpacity(0.08))),
-                tileColor: Colors.white.withOpacity(0.06),
-                leading: const Icon(Icons.north_west_rounded, color: _muted, size: 18),
-                title: Text(s, style: const TextStyle(color: _text, fontSize: 14)),
-                onTap: () {
-                  _inputController.text = s;
-                  _inputController.selection = TextSelection.collapsed(offset: s.length);
-                },
-              ),
-            )),
-      ],
-    );
-  }
-
-  Widget _messageList() => ListView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
-        itemCount: _messages.length,
-        itemBuilder: (_, index) => _messageBubble(_messages[index]),
-      );
-
-  Widget _messageBubble(Message msg) {
-    final user = msg.role == 'user';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        mainAxisAlignment: user ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!user) _avatar(false),
-          if (!user) const SizedBox(width: 10),
-          Flexible(
-            child: Container(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.82),
-              padding: EdgeInsets.all(msg.type == MessageType.image ? 10 : 14),
-              decoration: BoxDecoration(
-                gradient: user ? const LinearGradient(colors: [_primary, Color(0xFF5B21B6)]) : null,
-                color: user ? null : Colors.white.withOpacity(0.07),
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(22),
-                  topRight: const Radius.circular(22),
-                  bottomLeft: Radius.circular(user ? 22 : 6),
-                  bottomRight: Radius.circular(user ? 6 : 22),
-                ),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (msg.type == MessageType.image)
-                  _imageMessage(msg.content)
-                else
-                  MarkdownBody(
-                    data: msg.content.isEmpty && msg.isGenerating ? '●' : msg.content,
-                    styleSheet: MarkdownStyleSheet(
-                      p: const TextStyle(color: _text, fontSize: 15.5, height: 1.5),
-                      code: const TextStyle(color: Color(0xFFFBBF24), backgroundColor: Colors.black26),
-                      codeblockDecoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                if (msg.localFilePath != null) _fileChip(msg.localFilePath!),
-              ]),
-            ),
-          ),
-          if (user) const SizedBox(width: 10),
-          if (user) _avatar(true),
-        ],
-      ),
-    );
-  }
-
-  Widget _avatar(bool user) => Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          gradient: user ? null : const LinearGradient(colors: [_secondary, _success]),
-          color: user ? Colors.white.withOpacity(0.12) : null,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white10),
-        ),
-        child: Icon(user ? Icons.person_rounded : Icons.auto_awesome, color: Colors.white, size: 18),
-      );
-
-  Widget _imageMessage(String url) {
-    final isDataImage = url.startsWith('data:image') && url.contains('base64,');
-    Widget image;
-    if (isDataImage) {
-      try {
-        final b64 = url.substring(url.indexOf('base64,') + 'base64,'.length);
-        image = Image.memory(
-          base64Decode(b64),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Text('图片解析失败，请检查接口返回内容。', style: TextStyle(color: Colors.redAccent)),
-        );
-      } catch (_) {
-        image = const Text('图片解析失败，请检查接口返回内容。', style: TextStyle(color: Colors.redAccent));
-      }
-    } else {
-      image = Image.network(
-        url,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Text('图片加载失败，请检查网络连接或 API Key。', style: TextStyle(color: Colors.redAccent)),
-        loadingBuilder: (_, child, progress) => progress == null ? child : const SizedBox(height: 220, child: Center(child: CircularProgressIndicator(color: _secondary))),
-      );
-    }
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      ClipRRect(borderRadius: BorderRadius.circular(18), child: image),
-      const SizedBox(height: 10),
-      if (!isDataImage)
-        FilledButton.icon(
-          onPressed: () => _saveImage(url),
-          icon: const Icon(Icons.download_rounded, color: Colors.white, size: 18),
-          label: const Text('保存到相册', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-          style: FilledButton.styleFrom(backgroundColor: _success),
-        )
-      else
-        const Text('图片由接口以 base64 返回，已直接显示。', style: TextStyle(color: _muted, fontSize: 12)),
-    ]);
-  }
-
-  Widget _fileChip(String path) => Padding(
-        padding: const EdgeInsets.only(top: 10),
-        child: Chip(
-          avatar: const Icon(Icons.image_rounded, color: _secondary, size: 15),
-          label: Text(path.split('/').last, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _text, fontSize: 12)),
-          backgroundColor: Colors.white.withOpacity(0.10),
-          side: BorderSide(color: Colors.white.withOpacity(0.10)),
-        ),
-      );
-
-  Widget _loadingBar() => const Padding(
-        padding: EdgeInsets.fromLTRB(18, 0, 18, 8),
-        child: ClipRRect(borderRadius: BorderRadius.all(Radius.circular(999)), child: LinearProgressIndicator(minHeight: 3, color: _secondary, backgroundColor: Colors.white10)),
-      );
-
-  Widget _composer() => Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: _surface.withOpacity(0.96), borderRadius: BorderRadius.circular(28), border: Border.all(color: Colors.white10)),
+        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_bgTop, _bgBottom])),
         child: SafeArea(
           top: false,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            if (_attachedFile != null) _attachmentPreview(),
-            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              _inputButton(Icons.add_photo_alternate_rounded, _secondary, _pickImage),
-              const SizedBox(width: 6),
-              _inputButton(_forceImage ? Icons.brush_rounded : Icons.auto_awesome_outlined, _forceImage ? _primary : _muted, () => setState(() => _forceImage = !_forceImage)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Container(
-                  constraints: const BoxConstraints(minHeight: 46, maxHeight: 138),
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _forceImage ? _primary.withOpacity(0.42) : Colors.white10),
-                  ),
-                  child: TextField(
-                    controller: _inputController,
-                    style: const TextStyle(color: _text, fontSize: 15),
-                    cursorColor: _secondary,
-                    decoration: InputDecoration(
-                      hintText: _forceImage
-                          ? (_attachedFile == null ? '描述你想生成的图片...' : '描述你想如何编辑这张图...')
-                          : (_attachedFile == null ? '输入消息，AI 自动判断是否调用图片工具' : '输入问题或改图要求，AI 自动判断'),
-                      hintStyle: const TextStyle(color: _muted, fontSize: 14),
-                      border: InputBorder.none,
-                    ),
-                    maxLines: null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: _isLoading ? null : _send,
-                child: _gradientBox(child: Icon(_isLoading ? Icons.hourglass_top_rounded : Icons.arrow_upward_rounded, color: Colors.white), size: 48, radius: 18),
-              ),
-            ]),
+          child: Column(children: [
+            _kawaiiHeader(),
+            Expanded(child: _messages.isEmpty ? _emptyState() : _messageList()),
+            if (_loading) const LinearProgressIndicator(color: _primary, backgroundColor: Color(0x22FF6FB1)),
+            _composer(),
           ]),
         ),
+      ),
+    );
+  }
+
+  Widget _roundIcon(IconData icon, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: IconButton(onPressed: onTap, icon: Icon(icon, color: _text), style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.72))),
       );
 
-  Widget _inputButton(IconData icon, Color color, VoidCallback? onTap) => InkWell(
-        borderRadius: BorderRadius.circular(17),
-        onTap: onTap,
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(color: onTap == null ? Colors.white.withOpacity(0.04) : color.withOpacity(0.12), borderRadius: BorderRadius.circular(17), border: Border.all(color: Colors.white10)),
-          child: Icon(icon, color: onTap == null ? Colors.white24 : color, size: 21),
-        ),
-      );
-
-  Widget _attachmentPreview() => Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: _success.withOpacity(0.10), borderRadius: BorderRadius.circular(18), border: Border.all(color: _success.withOpacity(0.28))),
-        child: Row(children: [
-          const Icon(Icons.image_rounded, color: _success),
-          const SizedBox(width: 10),
-          Expanded(child: Text('已选择参考图片：${_attachedFile!.path.split('/').last}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _text))),
-          IconButton(
-            icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
-            onPressed: () => setState(() {
-              _attachedFile = null;
-              _attachedBase64 = null;
-            }),
+  Widget _kawaiiHeader() => Container(
+        margin: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+        padding: const EdgeInsets.all(14),
+        decoration: _kawaiiBox(26),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(width: 54, height: 54, decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [_primary, _primary2])), child: const Center(child: Text('✦', style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)))),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_forceImage ? '画图魔法模式开启' : '自动判断模式开启', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 3),
+              Text('比例 $_imageAspectRatio · 尺寸 $_selectedSize · ${_qualityLabel(_imageQuality)}画质', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700)),
+            ])),
+            _statusChip(),
+          ]),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: _modeButton(Icons.auto_awesome, '自动', !_forceImage, () => setState(() => _forceImage = false))),
+            const SizedBox(width: 8),
+            Expanded(child: _modeButton(Icons.brush, '画图', _forceImage, () => setState(() => _forceImage = true))),
+            const SizedBox(width: 8),
+            Expanded(child: _modeButton(Icons.image, '参考图', _attachedFile != null, _pickImage)),
+          ]),
+          const SizedBox(height: 10),
+          InkWell(
+            onTap: _openImageParams,
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(color: _card2, borderRadius: BorderRadius.circular(18), border: Border.all(color: _line)),
+              child: Row(children: [
+                const Icon(Icons.tune_rounded, color: _primary),
+                const SizedBox(width: 8),
+                Expanded(child: Text('图片参数：$_imageAspectRatio · ${_qualityLabel(_imageQuality)} · ${_enhanceImagePrompt ? '润色开' : '润色关'}', style: const TextStyle(color: _text, fontWeight: FontWeight.w900))),
+                const Icon(Icons.keyboard_arrow_up_rounded, color: _muted),
+              ]),
+            ),
           ),
         ]),
       );
 
-  Widget _pill(IconData icon, String label, Color color, VoidCallback onTap) => InkWell(
+  Widget _statusChip() => InkWell(
+        onTap: _openSettings,
         borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(color: color.withOpacity(0.13), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withOpacity(0.38))),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, color: color, size: 15), const SizedBox(width: 5), Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 12))]),
+          decoration: BoxDecoration(color: _apiKey.isEmpty ? const Color(0xFFFFF0BA) : const Color(0xFFDDFBF7), borderRadius: BorderRadius.circular(999), border: Border.all(color: _apiKey.isEmpty ? Colors.orangeAccent : _mint)),
+          child: Text(_apiKey.isEmpty ? '未配置' : '已配置', style: TextStyle(color: _apiKey.isEmpty ? Colors.orange.shade900 : const Color(0xFF147C78), fontWeight: FontWeight.w900, fontSize: 12)),
         ),
       );
 
-  Widget _gradientBox({required Widget child, required double size, required double radius}) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(gradient: const LinearGradient(colors: [_primary, _secondary]), borderRadius: BorderRadius.circular(radius)),
-        child: Center(child: child),
+  Widget _modeButton(IconData icon, String text, bool active, VoidCallback onTap) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(gradient: active ? const LinearGradient(colors: [_primary, _primary2]) : null, color: active ? null : Colors.white.withOpacity(0.68), borderRadius: BorderRadius.circular(18), border: Border.all(color: active ? Colors.white : _line)),
+          child: Column(children: [Icon(icon, color: active ? Colors.white : _primary), const SizedBox(height: 4), Text(text, style: TextStyle(color: active ? Colors.white : _text, fontSize: 12, fontWeight: FontWeight.w900))]),
+        ),
       );
 
-  BoxDecoration _glassDecoration(double radius) => BoxDecoration(
-        color: Colors.white.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: Colors.white10),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.22), blurRadius: 24, offset: const Offset(0, 12))],
-      );
-
-  void _confirmClear() {
-    if (_messages.isEmpty) return;
-    showDialog(
+  Future<void> _openImageParams() async {
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: _surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('清空对话', style: TextStyle(color: _text, fontWeight: FontWeight.w800)),
-        content: const Text('确定要清空当前所有聊天记录吗？', style: TextStyle(color: _muted)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消', style: TextStyle(color: _muted))),
-          TextButton(
-            onPressed: () {
-              setState(_messages.clear);
-              Navigator.pop(dialogContext);
-            },
-            child: const Text('清空', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w800)),
-          ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(builder: (ctx, sheetSetState) {
+        Future<void> apply(Future<void> Function() fn) async {
+          await fn();
+          sheetSetState(() {});
+          if (mounted) setState(() {});
+        }
+        return Container(
+          padding: EdgeInsets.fromLTRB(18, 16, 18, MediaQuery.of(ctx).padding.bottom + 18),
+          decoration: const BoxDecoration(color: _card, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Center(child: Container(width: 48, height: 5, decoration: BoxDecoration(color: _line, borderRadius: BorderRadius.circular(99)))),
+            const SizedBox(height: 16),
+            const Text('图片魔法参数', style: TextStyle(color: _text, fontSize: 21, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            Text('当前尺寸：$_selectedSize。比例会作为图片接口 size 参数传入，不只是写进提示词。', style: const TextStyle(color: _muted, height: 1.35)),
+            const SizedBox(height: 18),
+            const Text('画面比例', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 8, children: _aspectOptions.map((v) => _choice(v, _imageAspectRatio == v, () => apply(() async { _imageAspectRatio = v; await _saveAllSettings(); }))).toList()),
+            const SizedBox(height: 18),
+            const Text('清晰度', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 8, children: _qualityOptions.map((v) => _choice(_qualityLabel(v), _imageQuality == v, () => apply(() async { _imageQuality = v; await _saveAllSettings(); }))).toList()),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('LLM 润色提示词后再生成', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+              subtitle: const Text('开启后会把比例、尺寸、画质一起交给聊天模型润色提示词', style: TextStyle(color: _muted)),
+              activeColor: _primary,
+              value: _enhanceImagePrompt,
+              onChanged: (v) => apply(() async { _enhanceImagePrompt = v; await _saveAllSettings(); }),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.favorite), label: const Text('完成'), style: FilledButton.styleFrom(backgroundColor: _primary, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18))))),
+          ]),
+        );
+      }),
+    );
+  }
+
+  Widget _choice(String label, bool active, VoidCallback onTap) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(gradient: active ? const LinearGradient(colors: [_primary, _primary2]) : null, color: active ? null : _card2, borderRadius: BorderRadius.circular(999), border: Border.all(color: active ? Colors.white : _line)),
+          child: Text(label, style: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w900)),
+        ),
+      );
+
+  Widget _emptyState() => ListView(
+        padding: const EdgeInsets.all(24),
+        children: const [
+          SizedBox(height: 34),
+          Text('♡', textAlign: TextAlign.center, style: TextStyle(color: _primary, fontSize: 76, fontWeight: FontWeight.w900)),
+          SizedBox(height: 8),
+          Text('今天想画什么可爱东西？', textAlign: TextAlign.center, style: TextStyle(color: _text, fontSize: 24, fontWeight: FontWeight.w900)),
+          SizedBox(height: 10),
+          Text('点上方“图片参数”就能选择比例、清晰度和提示词润色。也可以上传参考图进行图生图。', textAlign: TextAlign.center, style: TextStyle(color: _muted, height: 1.5, fontWeight: FontWeight.w600)),
         ],
+      );
+
+  Widget _messageList() => ListView.builder(controller: _scroll, padding: const EdgeInsets.fromLTRB(12, 4, 12, 12), itemCount: _messages.length, itemBuilder: (_, i) => _bubble(_messages[i]));
+
+  Widget _bubble(Message msg) {
+    final user = msg.role == 'user';
+    return Align(
+      alignment: user ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.84),
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: user ? _primary : _card, borderRadius: BorderRadius.only(topLeft: const Radius.circular(22), topRight: const Radius.circular(22), bottomLeft: Radius.circular(user ? 22 : 6), bottomRight: Radius.circular(user ? 6 : 22)), border: Border.all(color: user ? Colors.white : _line), boxShadow: [BoxShadow(color: _primary.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 6))]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (msg.type == MessageType.image) _imageMessage(msg.content) else MarkdownBody(data: msg.content.isEmpty && msg.isGenerating ? '●' : msg.content, styleSheet: MarkdownStyleSheet(p: TextStyle(color: user ? Colors.white : _text, height: 1.45, fontWeight: FontWeight.w600))),
+          if (msg.localFilePath != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('参考图：${msg.localFilePath!.split('/').last}', style: TextStyle(color: user ? Colors.white70 : _muted, fontSize: 12))),
+        ]),
       ),
     );
   }
 
-  void _openConsole() {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DebugConsoleScreen()));
+  Widget _imageMessage(String url) {
+    final isData = url.startsWith('data:image') && url.contains('base64,');
+    final image = isData
+        ? Image.memory(base64Decode(url.substring(url.indexOf('base64,') + 7)), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('图片解析失败', style: TextStyle(color: Colors.redAccent)))
+        : Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Text('图片加载失败', style: TextStyle(color: Colors.redAccent)));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ClipRRect(borderRadius: BorderRadius.circular(18), child: image),
+      const SizedBox(height: 8),
+      if (!isData) FilledButton.icon(onPressed: () => _saveImage(url), icon: const Icon(Icons.download), label: const Text('保存到相册'), style: FilledButton.styleFrom(backgroundColor: _mint, foregroundColor: Colors.white)) else const Text('base64 图片已直接显示', style: TextStyle(color: _muted, fontSize: 12)),
+    ]);
   }
+
+  Widget _composer() => Container(
+        margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+        padding: const EdgeInsets.all(10),
+        decoration: _kawaiiBox(28),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_attachedFile != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(color: const Color(0xFFE9FFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _mint)),
+              child: ListTile(dense: true, leading: const Icon(Icons.image, color: _mint), title: Text(_attachedFile!.path.split('/').last, style: const TextStyle(color: _text, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() { _attachedFile = null; _attachedBase64 = null; }), icon: const Icon(Icons.close, color: _primary))),
+            ),
+          Row(children: [
+            _smallButton(Icons.add_photo_alternate, _pickImage, _mint),
+            const SizedBox(width: 6),
+            _smallButton(_forceImage ? Icons.brush : Icons.auto_awesome_outlined, () => setState(() => _forceImage = !_forceImage), _forceImage ? _primary : _primary2),
+            const SizedBox(width: 6),
+            Expanded(child: TextField(controller: _input, style: const TextStyle(color: _text, fontWeight: FontWeight.w700), minLines: 1, maxLines: 5, decoration: InputDecoration(hintText: _forceImage ? '描述想生成/编辑的图片…' : '和 Luna 聊天，或描述想画的图…', hintStyle: const TextStyle(color: _muted), filled: true, fillColor: _card2, border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none)))),
+            const SizedBox(width: 6),
+            _smallButton(Icons.arrow_upward_rounded, _loading ? null : _send, _primary),
+          ]),
+        ]),
+      );
+
+  Widget _smallButton(IconData icon, VoidCallback? onTap, Color color) => IconButton(onPressed: onTap, icon: Icon(icon, color: Colors.white), style: IconButton.styleFrom(backgroundColor: onTap == null ? Colors.grey.shade300 : color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17))));
+
+  BoxDecoration _kawaiiBox(double radius) => BoxDecoration(color: _card.withOpacity(0.92), borderRadius: BorderRadius.circular(radius), border: Border.all(color: Colors.white, width: 1.5), boxShadow: [BoxShadow(color: _primary.withOpacity(0.16), blurRadius: 24, offset: const Offset(0, 10))]);
 
   Future<void> _openSettings() async {
-    FocusManager.instance.primaryFocus?.unfocus();
-    try {
-      final settings = await _settingsService.getSettings();
-      if (!mounted) return;
-      await _showSettingsDialog(
-        apiKey: settings['apiKey'] ?? _apiKey,
-        imageApiKey: settings['imageApiKey'] ?? _imageApiKey,
-        baseUrl: settings['baseUrl'] ?? _baseUrl,
-        imageBaseUrl: settings['imageBaseUrl'] ?? _imageBaseUrl,
-        chatModel: settings['chatModel'] ?? _chatModel,
-        imageModel: settings['imageModel'] ?? _imageModel,
-        imageEditModel: settings['imageEditModel'] ?? _imageEditModel,
-      );
-    } catch (_) {
-      if (!mounted) return;
-      await _showSettingsDialog(apiKey: _apiKey, imageApiKey: _imageApiKey, baseUrl: _baseUrl, imageBaseUrl: _imageBaseUrl, chatModel: _chatModel, imageModel: _imageModel, imageEditModel: _imageEditModel);
-    }
-  }
-
-  Future<void> _showSettingsDialog({
-    required String apiKey,
-    required String imageApiKey,
-    required String baseUrl,
-    required String imageBaseUrl,
-    required String chatModel,
-    required String imageModel,
-    required String imageEditModel,
-  }) async {
-    final keyCtrl = TextEditingController(text: apiKey);
-    final imageKeyCtrl = TextEditingController(text: imageApiKey);
-    final urlCtrl = TextEditingController(text: baseUrl);
-    final imageUrlCtrl = TextEditingController(text: imageBaseUrl);
-    final chatCtrl = TextEditingController(text: chatModel);
-    final imageCtrl = TextEditingController(text: imageModel);
-    final imageEditCtrl = TextEditingController(text: imageEditModel);
+    final key = TextEditingController(text: _apiKey);
+    final imageKey = TextEditingController(text: _imageApiKey);
+    final base = TextEditingController(text: _baseUrl);
+    final imageBase = TextEditingController(text: _imageBaseUrl);
+    final chat = TextEditingController(text: _chatModel);
+    final image = TextEditingController(text: _imageModel);
+    final edit = TextEditingController(text: _imageEditModel);
     try {
       await showDialog<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          backgroundColor: _surface,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+        builder: (ctx) => AlertDialog(
+          backgroundColor: _card,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
-          title: const Row(children: [Icon(Icons.settings_rounded, color: _secondary), SizedBox(width: 10), Text('API 配置参数', style: TextStyle(color: _text, fontWeight: FontWeight.w900))]),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _sectionTitle('聊天 / 决策配置'),
-              _field(keyCtrl, '聊天 API Key', 'sk-xxxx'),
-              _field(urlCtrl, '聊天 Base URL', 'https://api.openai.com/v1'),
-              _field(chatCtrl, '多模态聊天模型', 'gpt-4o-mini'),
-              _sectionTitle('图片工具配置'),
-              _field(imageKeyCtrl, '图片 API Key（可留空沿用聊天令牌）', 'sk-image-xxxx'),
-              _field(imageUrlCtrl, '图片 Base URL（可留空沿用聊天接口）', 'https://api.openai.com/v1'),
-              _field(imageCtrl, '文生图模型', 'dall-e-3'),
-              _field(imageEditCtrl, '图生图 / 图片编辑模型', 'gpt-image-1'),
-              const Text('自动模式下，多模态模型会先判断是否需要调用图片工具；强制图片工具模式下，无图走文生图，有图走图生图。', style: TextStyle(color: _muted, fontSize: 12, height: 1.4)),
-            ]),
-          ),
+          title: const Text('API 配置', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [_field(key, '聊天 API Key'), _field(base, '聊天 Base URL'), _field(chat, '聊天模型'), _field(imageKey, '图片 API Key（可留空）'), _field(imageBase, '图片 Base URL（可留空）'), _field(image, '文生图模型'), _field(edit, '图生图模型')])),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消', style: TextStyle(color: _muted))),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: _primary),
               onPressed: () async {
-                final newImageKey = imageKeyCtrl.text.trim();
-                final newBase = urlCtrl.text.trim().isEmpty ? 'https://api.openai.com/v1' : urlCtrl.text.trim();
-                final newImageBase = imageUrlCtrl.text.trim();
-                final newChat = chatCtrl.text.trim().isEmpty ? 'gpt-4o-mini' : chatCtrl.text.trim();
-                final newImage = _apiService.normalizeImageModel(imageCtrl.text.trim().isEmpty ? 'dall-e-3' : imageCtrl.text.trim());
-                final newImageEdit = _apiService.normalizeImageEditModel(imageEditCtrl.text.trim().isEmpty ? 'gpt-image-1' : imageEditCtrl.text.trim());
-                await _settingsService.saveSettings(
-                  apiKey: keyCtrl.text.trim(),
-                  imageApiKey: newImageKey,
-                  baseUrl: newBase,
-                  imageBaseUrl: newImageBase,
-                  chatModel: newChat,
-                  imageModel: newImage,
-                  imageEditModel: newImageEdit,
-                );
-                if (!mounted) return;
                 setState(() {
-                  _apiKey = keyCtrl.text.trim();
-                  _imageApiKey = newImageKey;
-                  _baseUrl = newBase;
-                  _imageBaseUrl = newImageBase;
-                  _chatModel = newChat;
-                  _imageModel = newImage;
-                  _imageEditModel = newImageEdit;
+                  _apiKey = key.text.trim();
+                  _imageApiKey = imageKey.text.trim();
+                  _baseUrl = base.text.trim().isEmpty ? 'https://api.openai.com/v1' : base.text.trim();
+                  _imageBaseUrl = imageBase.text.trim();
+                  _chatModel = chat.text.trim().isEmpty ? 'gpt-4o-mini' : chat.text.trim();
+                  _imageModel = _api.normalizeImageModel(image.text.trim().isEmpty ? 'dall-e-3' : image.text.trim());
+                  _imageEditModel = _api.normalizeImageEditModel(edit.text.trim().isEmpty ? 'gpt-image-1' : edit.text.trim());
                 });
-                _log.success('settings', '设置已保存', 'API 配置已更新', details: {
-                  'hasChatKey': _apiKey.isNotEmpty,
-                  'hasImageKey': newImageKey.isNotEmpty,
-                  'baseUrl': newBase,
-                  'imageBaseUrl': newImageBase,
-                  'chatModel': newChat,
-                  'imageModel': newImage,
-                  'imageEditModel': newImageEdit,
-                });
-                Navigator.pop(dialogContext);
-                final imageKeyTip = newImageKey.isEmpty ? '图片令牌沿用聊天令牌' : '聊天/图片令牌已分开';
-                final imageUrlTip = newImageBase.isEmpty ? '图片接口沿用聊天接口' : '聊天/图片接口已分开';
-                _snack('设置已保存，$imageKeyTip，$imageUrlTip');
+                await _saveAllSettings();
+                if (mounted) Navigator.pop(ctx);
+                _snack('设置已保存');
               },
-              child: const Text('保存修改', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+              child: const Text('保存'),
             ),
           ],
         ),
       );
     } finally {
-      keyCtrl.dispose();
-      imageKeyCtrl.dispose();
-      urlCtrl.dispose();
-      imageUrlCtrl.dispose();
-      chatCtrl.dispose();
-      imageCtrl.dispose();
-      imageEditCtrl.dispose();
+      key.dispose(); imageKey.dispose(); base.dispose(); imageBase.dispose(); chat.dispose(); image.dispose(); edit.dispose();
     }
   }
 
-  Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 10, top: 4),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text(text, style: const TextStyle(color: _secondary, fontWeight: FontWeight.w900)),
-        ),
-      );
-
-  Widget _field(TextEditingController controller, String label, String hint) => Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: TextField(
-          controller: controller,
-          style: const TextStyle(color: _text),
-          cursorColor: _secondary,
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            labelStyle: const TextStyle(color: _muted),
-            hintStyle: const TextStyle(color: Colors.white30),
-            filled: true,
-            fillColor: Colors.white.withOpacity(0.06),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: Colors.white.withOpacity(0.10))),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: _secondary)),
-          ),
-        ),
+  Widget _field(TextEditingController c, String label) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(controller: c, style: const TextStyle(color: _text, fontWeight: FontWeight.w700), decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(color: _muted), filled: true, fillColor: _card2, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: _line)), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: _primary, width: 2)))),
       );
 }
