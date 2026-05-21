@@ -11,6 +11,7 @@ class SettingsService {
   static const String _keyImageAspectRatio = 'image_aspect_ratio';
   static const String _keyImageQuality = 'image_quality';
   static const String _keyEnhanceImagePrompt = 'enhance_image_prompt';
+  static const String _keyImageCount = 'image_count';
   static const String _keyStudioHeaderCollapsed = 'studio_header_collapsed';
 
   Future<void> saveSettings({
@@ -24,6 +25,7 @@ class SettingsService {
     String imageAspectRatio = '1:1',
     String imageQuality = 'auto',
     bool enhanceImagePrompt = true,
+    int imageCount = 1,
     bool? studioHeaderCollapsed,
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -37,6 +39,7 @@ class SettingsService {
     await prefs.setString(_keyImageAspectRatio, imageAspectRatio.trim().isEmpty ? '1:1' : imageAspectRatio.trim());
     await prefs.setString(_keyImageQuality, imageQuality.trim().isEmpty ? 'auto' : imageQuality.trim());
     await prefs.setBool(_keyEnhanceImagePrompt, enhanceImagePrompt);
+    await prefs.setInt(_keyImageCount, imageCount.clamp(1, 4).toInt());
     if (studioHeaderCollapsed != null) await prefs.setBool(_keyStudioHeaderCollapsed, studioHeaderCollapsed);
   }
 
@@ -58,6 +61,7 @@ class SettingsService {
       'imageAspectRatio': prefs.getString(_keyImageAspectRatio) ?? '1:1',
       'imageQuality': prefs.getString(_keyImageQuality) ?? 'auto',
       'enhanceImagePrompt': (prefs.getBool(_keyEnhanceImagePrompt) ?? true).toString(),
+      'imageCount': (prefs.getInt(_keyImageCount) ?? 1).clamp(1, 4).toString(),
       'studioHeaderCollapsed': (prefs.getBool(_keyStudioHeaderCollapsed) ?? true).toString(),
     };
   }
@@ -74,6 +78,7 @@ class SettingsService {
     await prefs.remove(_keyImageAspectRatio);
     await prefs.remove(_keyImageQuality);
     await prefs.remove(_keyEnhanceImagePrompt);
+    await prefs.remove(_keyImageCount);
     await prefs.remove(_keyStudioHeaderCollapsed);
   }
 }
