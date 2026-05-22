@@ -2,14 +2,23 @@ enum MessageType { text, image }
 
 class Message {
   final String id;
-  final String role;
-  String content;
+  final String role; // 'user', 'assistant', 'system'
+  String content; // 流式更新需要可变
   final MessageType type;
+
+  /// 兼容旧版：单张上传文件本地路径。
   final String? localFilePath;
+
+  /// 兼容旧版：单张上传图片 base64 编码。
   final String? base64Image;
+
+  /// 新版：多张参考图本地路径。
   final List<String> localFilePaths;
+
+  /// 新版：多张参考图 base64 编码，用于多模态请求。
   final List<String> base64Images;
-  bool isGenerating;
+
+  bool isGenerating; // 是否正在处于打字机流式生成状态
   final DateTime timestamp;
 
   Message({
@@ -39,17 +48,71 @@ class Message {
     return single == null || single.trim().isEmpty ? const <String>[] : <String>[single];
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'role': role,
+        'content': content,
+        'type': type.name,
+        'localFilePath': localFilePath,
+        // 历史记录不持久化 base64 图片，避免 SharedPreferences 因大图过大而写入失败。
+        // 恢复历史时仍保留文字、图片 URL/data 消息和本地参考图路径。
+        'base64Image': null,
+        'localFilePaths': localFilePaths,
+        'base64Images': const <String>[],
+        'isGenerating': false,
+        'timestamp': timestamp.toIso8601String(),
+      };
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    List<String> stringList(Object? value) {
+      if (value is List) return value.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+      return const <String>[];
+    }
+
+    final rawType = json['type']?.toString() ?? 'text';
+    final parsedType = MessageType.values.firstWhere(
+      (e) => e.name == rawType,
+      orElse: () => MessageType.text,
+    );
+    return Message(
+      id: json['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString(),
+      role: json['role']?.toString() ?? 'assistant',
+      content: json['content']?.toString() ?? '',
+      type: parsedType,
+      localFilePath: json['localFilePath']?.toString(),
+      base64Image: json['base64Image']?.toString(),
+      localFilePaths: stringList(json['localFilePaths']),
+      base64Images: stringList(json['base64Images']),
+      isGenerating: json['isGenerating'] == true,
+      timestamp: DateTime.tryParse(json['timestamp']?.toString() ?? '') ?? DateTime.now(),
+    );
+  }
+
+  // 转换成 OpenAI API 标准的消息格式
   Map<String, dynamic> toOpenAiMap() {
     final images = effectiveBase64Images;
     if (images.isNotEmpty) {
+      // OpenAI 多模态消息格式，支持多张图片。
       return {
         'role': role,
         'content': [
-          {'type': 'text', 'text': content.isNotEmpty ? content : (images.length > 1 ? '分析这些图片' : '分析这张图片')},
-          ...images.map((image) => {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,$image'}}),
+          {
+            'type': 'text',
+            'text': content.isNotEmpty ? content : (images.length > 1 ? '分析这些图片' : '分析这张图片')
+          },
+          ...images.map((image) => {
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:image/jpeg;base64,$image'
+                }
+              }),
         ]
       };
     }
-    return {'role': role, 'content': content};
+    // 普通文本消息格式
+    return {
+      'role': role,
+      'content': content,
+    };
   }
 }
