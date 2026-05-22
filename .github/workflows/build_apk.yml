@@ -95,7 +95,12 @@ jobs:
           fi
           APKSIGNER=${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools | sort -V | tail -n 1)/apksigner
           "$APKSIGNER" verify --print-certs "$APK_PATH" | tee /tmp/apk-certs.txt
-          ACTUAL_SHA256=$(awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}' /tmp/apk-certs.txt)
+          ACTUAL_SHA256=$(awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' /tmp/apk-certs.txt)
+          if [ -z "$ACTUAL_SHA256" ]; then
+            echo "ERROR: Failed to parse APK certificate SHA-256 digest." >&2
+            cat /tmp/apk-certs.txt >&2
+            exit 1
+          fi
           if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
             echo "ERROR: APK signing certificate mismatch." >&2
             echo "Expected: $EXPECTED_SHA256" >&2
