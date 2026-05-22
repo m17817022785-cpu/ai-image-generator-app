@@ -1,0 +1,50 @@
+name: zz sync remove duplicate button
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync_patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Patch home screen
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/screens/home_screen.dart')
+          s = p.read_text(encoding='utf-8')
+          old = """              OutlinedButton.icon(
+                onPressed: () => _setStudioHeaderCollapsed(false),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                label: const Text('展开创作面板'),
+              ),
+"""
+          if old in s:
+              s = s.replace(old, '', 1)
+              p.write_text(s, encoding='utf-8')
+              print('removed duplicate empty-state expand button')
+          else:
+              print('target block not found; maybe already removed')
+          PY
+
+      - name: Commit patch if changed
+        run: |
+          if git diff --quiet -- lib/screens/home_screen.dart; then
+            echo "No patch changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/home_screen.dart
+          git commit -m "ui: remove duplicate studio expand button"
+          git push
