@@ -1,0 +1,57 @@
+name: Remove Duplicate Studio Button
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Remove duplicate empty-state studio expand button
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/screens/home_screen.dart')
+          text = path.read_text(encoding='utf-8')
+
+          old = """              OutlinedButton.icon(
+                onPressed: () => _setStudioHeaderCollapsed(false),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                label: const Text('展开创作面板'),
+              ),
+"""
+
+          if old not in text:
+              print('Target duplicate button block not found; checking if already removed.')
+              if "label: const Text('展开创作面板')" in text:
+                  print('The label still exists elsewhere, likely top collapsed panel tooltip/logic. No empty-state block matched.')
+              raise SystemExit(0)
+
+          text = text.replace(old, '', 1)
+          path.write_text(text, encoding='utf-8')
+          print('Removed duplicate empty-state studio expand button.')
+          PY
+
+      - name: Show diff
+        run: git diff -- lib/screens/home_screen.dart
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet -- lib/screens/home_screen.dart; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/home_screen.dart
+          git commit -m "ui: remove duplicate studio expand button"
+          git push
