@@ -16,9 +16,42 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Apply HomeScreen hotfix
         run: python3 .github/scripts/apply_hotfix.py
+
+      - name: Auto bump app version for manual APK builds
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          VERSION_NAME=${CURRENT_VERSION%%+*}
+          VERSION_CODE=${CURRENT_VERSION##*+}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+          if ! [[ "$MAJOR" =~ ^[0-9]+$ && "$MINOR" =~ ^[0-9]+$ && "$PATCH" =~ ^[0-9]+$ && "$VERSION_CODE" =~ ^[0-9]+$ ]]; then
+            echo "Invalid pubspec version: $CURRENT_VERSION" >&2
+            exit 1
+          fi
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_CODE=$((VERSION_CODE + 1))
+          NEXT_VERSION="$MAJOR.$MINOR.$NEXT_PATCH+$NEXT_CODE"
+          echo "Bumping app version: $CURRENT_VERSION -> $NEXT_VERSION"
+          sed -i "s/^version: .*/version: $NEXT_VERSION/" pubspec.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- pubspec.yaml; then
+            echo "No version change detected."
+          else
+            git add pubspec.yaml
+            git commit -m "chore: bump app version to ${NEXT_VERSION%%+*}"
+            git push
+          fi
+          echo "APP_VERSION=$NEXT_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NAME=${NEXT_VERSION%%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${NEXT_VERSION##*+}" >> "$GITHUB_ENV"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -27,32 +60,32 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Restore 1.2.10 compatible cached debug keystore
+      - name: Restore compatible cached debug keystore
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: android-debug-keystore-v1
 
-      - name: Require 1.2.10 compatible cached debug keystore
+      - name: Require compatible cached debug keystore
         shell: bash
         run: |
           set -euo pipefail
           EXPECTED_SHA256="120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
           KEYSTORE="$HOME/.android/debug.keystore"
           if [ ! -f "$KEYSTORE" ]; then
-            echo "ERROR: 1.2.10 compatible cached debug keystore is missing." >&2
+            echo "ERROR: Compatible cached debug keystore is missing." >&2
             echo "Expected GitHub Actions cache key: android-debug-keystore-v1" >&2
             echo "Refusing to generate a new key because that would cause Android signing conflict." >&2
             exit 1
           fi
-          echo "Using cached debug keystore compatible with 1.2.10: $KEYSTORE"
+          echo "Using cached debug keystore compatible with previously installed app versions: $KEYSTORE"
           keytool -list -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey | grep -E 'Alias name:|SHA1:|SHA256:' || true
           ACTUAL_SHA256=$(keytool -list -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey | awk -F'SHA256: ' '/SHA256:/ {gsub(":", "", $2); print tolower($2); exit}')
           if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
             echo "ERROR: Cached keystore SHA-256 mismatch." >&2
             echo "Expected: $EXPECTED_SHA256" >&2
             echo "Actual:   $ACTUAL_SHA256" >&2
-            echo "Refusing to build APK that cannot upgrade the installed 1.2.10 app." >&2
+            echo "Refusing to build APK that cannot upgrade the installed app." >&2
             exit 1
           fi
           printf 'storeFile=%s\nstorePassword=android\nkeyAlias=androiddebugkey\nkeyPassword=android\n' "$KEYSTORE" > android/key.properties
@@ -71,20 +104,26 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Resolve app version for non-manual builds
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          BUILD_NAME=${APP_VERSION%%+*}
-          PUBSPEC_BUILD_NUMBER=${APP_VERSION##*+}
-          BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
-          if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "Invalid pubspec build number: $BUILD_NUMBER" >&2
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NAME=${APP_VERSION%%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${APP_VERSION##*+}" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$APP_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid build number: $APP_BUILD_NUMBER" >&2
             exit 1
           fi
-          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER signingSha256=120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
-          flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+          echo "Building APK versionName=$APP_BUILD_NAME versionCode=$APP_BUILD_NUMBER signingSha256=120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
+          flutter build apk --release --build-name "$APP_BUILD_NAME" --build-number "$APP_BUILD_NUMBER"
 
       - name: Verify APK signing certificate
         shell: bash
@@ -110,10 +149,10 @@ jobs:
             echo "Actual:   $ACTUAL_SHA256" >&2
             exit 1
           fi
-          echo "APK signing certificate matches 1.2.10 installed-app certificate."
+          echo "APK signing certificate matches compatible installed-app certificate."
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk-1-2-10-compatible-signing
+          name: release-apk-${{ env.APP_BUILD_NAME }}-compatible-signing
           path: build/app/outputs/flutter-apk/app-release.apk
