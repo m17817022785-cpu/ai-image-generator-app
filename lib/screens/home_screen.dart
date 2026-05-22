@@ -754,11 +754,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.history_rounded),
                 label: const Text('历史记录'),
               ),
-              OutlinedButton.icon(
-                onPressed: () => _setStudioHeaderCollapsed(false),
-                icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                label: const Text('展开创作面板'),
-              ),
             ],
           ),
         ],
