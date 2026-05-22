@@ -1,4 +1,41 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../models/message.dart';
+
+class ChatHistoryEntry {
+  final String id;
+  final String title;
+  final DateTime updatedAt;
+  final List<Message> messages;
+
+  const ChatHistoryEntry({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+    required this.messages,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'updatedAt': updatedAt.toIso8601String(),
+        'messages': messages.map((m) => m.toJson()).toList(),
+      };
+
+  factory ChatHistoryEntry.fromJson(Map<String, dynamic> json) => ChatHistoryEntry(
+        id: json['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        title: json['title']?.toString() ?? '未命名会话',
+        updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? DateTime.now(),
+        messages: (json['messages'] is List)
+            ? (json['messages'] as List)
+                .whereType<Map>()
+                .map((e) => Message.fromJson(Map<String, dynamic>.from(e)))
+                .toList()
+            : const <Message>[],
+      );
+}
 
 class SettingsService {
   static const String _keyApiKey = 'api_key';
@@ -13,6 +50,8 @@ class SettingsService {
   static const String _keyEnhanceImagePrompt = 'enhance_image_prompt';
   static const String _keyImageCount = 'image_count';
   static const String _keyStudioHeaderCollapsed = 'studio_header_collapsed';
+  static const String _keyChatHistory = 'chat_history_v1';
+  static const int _maxHistoryItems = 30;
 
   Future<void> saveSettings({
     required String apiKey,
@@ -64,6 +103,47 @@ class SettingsService {
       'imageCount': (prefs.getInt(_keyImageCount) ?? 1).clamp(1, 4).toString(),
       'studioHeaderCollapsed': (prefs.getBool(_keyStudioHeaderCollapsed) ?? true).toString(),
     };
+  }
+
+  Future<List<ChatHistoryEntry>> getChatHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyChatHistory);
+    if (raw == null || raw.trim().isEmpty) return const <ChatHistoryEntry>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <ChatHistoryEntry>[];
+      final items = decoded
+          .whereType<Map>()
+          .map((e) => ChatHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
+          .where((e) => e.messages.isNotEmpty)
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return items.take(_maxHistoryItems).toList();
+    } catch (_) {
+      return const <ChatHistoryEntry>[];
+    }
+  }
+
+  Future<void> upsertChatHistory(ChatHistoryEntry entry) async {
+    if (entry.messages.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final items = await getChatHistory();
+    final next = <ChatHistoryEntry>[
+      entry,
+      ...items.where((e) => e.id != entry.id),
+    ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    await prefs.setString(_keyChatHistory, jsonEncode(next.take(_maxHistoryItems).map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> deleteChatHistory(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final next = (await getChatHistory()).where((e) => e.id != id).toList();
+    await prefs.setString(_keyChatHistory, jsonEncode(next.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> clearChatHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyChatHistory);
   }
 
   Future<void> clearSettings() async {
