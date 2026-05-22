@@ -24,13 +24,7 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Cache Android debug keystore for stable fallback signing
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-
-      - name: Restore release keystore from secrets if configured
+      - name: Restore required release keystore from secrets
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -38,13 +32,18 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
-            printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/key.properties
-            echo "Release keystore restored from GitHub Secrets."
-          else
-            echo "Release keystore secrets are not configured. Falling back to cached debug keystore."
+          set -euo pipefail
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "ERROR: Release signing secrets are required." >&2
+            echo "Missing one or more of: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD." >&2
+            echo "Refusing to build a fallback-debug-signed release APK because it causes Android signature conflicts on upgrade." >&2
+            exit 1
           fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
+          printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/key.properties
+          echo "Release keystore restored from GitHub Secrets."
+          keytool -list -v -keystore android/app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" | grep -E 'Alias name:|SHA256:'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -59,6 +58,7 @@ jobs:
       - name: Build APK
         shell: bash
         run: |
+          set -euo pipefail
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
           PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
@@ -72,6 +72,17 @@ jobs:
           fi
           echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
+
+      - name: Verify APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "APK not found: $APK_PATH" >&2
+            exit 1
+          fi
+          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs "$APK_PATH" | grep -E 'Signer #1 certificate SHA-256 digest|Signer #1 certificate DN'
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
