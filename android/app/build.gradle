@@ -30,7 +30,8 @@ if (keystorePropertiesFile.exists()) {
     }
 }
 
-// Also allow CI to provide signing values through environment variables.
+// CI provides the 1.2.10-compatible cached debug keystore through environment variables
+// and/or android/key.properties. Release builds must still be explicitly signed.
 def envStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
 def envStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def envKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
@@ -82,7 +83,7 @@ android {
     buildTypes {
         release {
             if (!hasReleaseSigning) {
-                throw new GradleException("Release signing is required. Refusing to build a debug-signed release APK because it causes Android signature conflicts on upgrade. Configure android/key.properties locally or GitHub Secrets in CI.")
+                throw new GradleException("Release signing is required. Configure android/key.properties locally or CI signing environment variables. This project currently uses the 1.2.10-compatible cached debug keystore in GitHub Actions to avoid Android signature conflicts with installed 1.2.10 builds.")
             }
             signingConfig signingConfigs.release
         }
