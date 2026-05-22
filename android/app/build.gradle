@@ -1,6 +1,6 @@
 plugins {
     id "com.android.application"
-    id "org.jetbrains.kotlin.android"
+    id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -30,7 +30,7 @@ if (keystorePropertiesFile.exists()) {
     }
 }
 
-// Also allow GitHub Actions / CI to provide signing values through environment variables.
+// Also allow CI to provide signing values through environment variables.
 def envStoreFile = System.getenv('ANDROID_KEYSTORE_PATH')
 def envStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def envKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
@@ -48,7 +48,7 @@ def hasReleaseSigning = releaseStoreFile != null &&
 
 android {
     namespace "com.example.ai_image_generator"
-    compileSdkVersion 35
+    compileSdkVersion flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -63,7 +63,7 @@ android {
     defaultConfig {
         applicationId "com.example.ai_image_generator"
         minSdkVersion 21
-        targetSdkVersion 35
+        targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
@@ -81,10 +81,10 @@ android {
 
     buildTypes {
         release {
-            // Prefer a real stable release key when provided. If not configured, fall back to
-            // debug signing. The GitHub workflow caches ~/.android/debug.keystore so that
-            // fallback signing remains stable across future CI builds.
-            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            if (!hasReleaseSigning) {
+                throw new GradleException("Release signing is required. Refusing to build a debug-signed release APK because it causes Android signature conflicts on upgrade. Configure android/key.properties locally or GitHub Secrets in CI.")
+            }
+            signingConfig signingConfigs.release
         }
     }
 }
