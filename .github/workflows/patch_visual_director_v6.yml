@@ -1,0 +1,12 @@
+name: Patch Visual Director V6
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/patch_visual_prompt_director_v6.py
+      - run: git config user.name bot && git config user.email bot@example.com && git add lib/services/api_service.dart pubspec.yaml && git commit -m visual-director-v6 || true && git push || true
