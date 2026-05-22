@@ -24,26 +24,39 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Restore required release keystore from secrets
+      - name: Restore 1.2.10 compatible cached debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - name: Require 1.2.10 compatible cached debug keystore
         shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "ERROR: Release signing secrets are required." >&2
-            echo "Missing one or more of: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD." >&2
-            echo "Refusing to build a fallback-debug-signed release APK because it causes Android signature conflicts on upgrade." >&2
+          EXPECTED_SHA256="120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
+          KEYSTORE="$HOME/.android/debug.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "ERROR: 1.2.10 compatible cached debug keystore is missing." >&2
+            echo "Expected GitHub Actions cache key: android-debug-keystore-v1" >&2
+            echo "Refusing to generate a new key because that would cause Android signing conflict." >&2
             exit 1
           fi
-
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
-          printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" > android/key.properties
-          echo "Release keystore restored from GitHub Secrets."
-          keytool -list -v -keystore android/app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" | grep -E 'Alias name:|SHA256:'
+          echo "Using cached debug keystore compatible with 1.2.10: $KEYSTORE"
+          keytool -list -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey | grep -E 'Alias name:|SHA1:|SHA256:' || true
+          ACTUAL_SHA256=$(keytool -list -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey | awk -F'SHA256: ' '/SHA256:/ {gsub(":", "", $2); print tolower($2); exit}')
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: Cached keystore SHA-256 mismatch." >&2
+            echo "Expected: $EXPECTED_SHA256" >&2
+            echo "Actual:   $ACTUAL_SHA256" >&2
+            echo "Refusing to build APK that cannot upgrade the installed 1.2.10 app." >&2
+            exit 1
+          fi
+          printf 'storeFile=%s\nstorePassword=android\nkeyAlias=androiddebugkey\nkeyPassword=android\n' "$KEYSTORE" > android/key.properties
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=android" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=androiddebugkey" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=android" >> "$GITHUB_ENV"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -61,31 +74,38 @@ jobs:
           set -euo pipefail
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
-          PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
-          # IMPORTANT: Use pubspec build number as Android versionCode.
-          # GitHub run_number can be lower than the already installed APK versionCode,
-          # which would make Android treat the new APK as an old/non-upgradable build.
+          PUBSPEC_BUILD_NUMBER=${APP_VERSION##*+}
           BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
           if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "Invalid pubspec build number: $BUILD_NUMBER" >&2
             exit 1
           fi
-          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
+          echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER signingSha256=120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Verify APK signing certificate
         shell: bash
         run: |
           set -euo pipefail
+          EXPECTED_SHA256="120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19"
           APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
           if [ ! -f "$APK_PATH" ]; then
             echo "APK not found: $APK_PATH" >&2
             exit 1
           fi
-          ${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools | sort -V | tail -n 1)/apksigner verify --print-certs "$APK_PATH" | grep -E 'Signer #1 certificate SHA-256 digest|Signer #1 certificate DN'
+          APKSIGNER=${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools | sort -V | tail -n 1)/apksigner
+          "$APKSIGNER" verify --print-certs "$APK_PATH" | tee /tmp/apk-certs.txt
+          ACTUAL_SHA256=$(awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}' /tmp/apk-certs.txt)
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: APK signing certificate mismatch." >&2
+            echo "Expected: $EXPECTED_SHA256" >&2
+            echo "Actual:   $ACTUAL_SHA256" >&2
+            exit 1
+          fi
+          echo "APK signing certificate matches 1.2.10 installed-app certificate."
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
+          name: release-apk-1-2-10-compatible-signing
           path: build/app/outputs/flutter-apk/app-release.apk
