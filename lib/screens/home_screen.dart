@@ -387,10 +387,12 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 2), InkWell(onTap: () => _setStudioHeaderCollapsed(!_studioHeaderCollapsed), child: Text(_studioHeaderCollapsed ? '展开创作面板' : '收起创作面板', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w800))), const SizedBox(height: 4), Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}画质 · $_imageCount 张', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700))])),
             _statusChip(),
           ]),
-          const SizedBox(height: 12),
-          Row(children: [Expanded(child: _modeButton(Icons.auto_awesome, '自动', !_forceImage, () => setState(() => _forceImage = false))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.brush_rounded, '生图', _forceImage, () => setState(() => _forceImage = true))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.add_photo_alternate_rounded, '参考图', _attachedFiles.isNotEmpty, _pickImage))]),
+          if (!_studioHeaderCollapsed) ...[
+            const SizedBox(height: 12),
+            Row(children: [Expanded(child: _modeButton(Icons.auto_awesome, '自动', !_forceImage, () => setState(() => _forceImage = false))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.brush_rounded, '生图', _forceImage, () => setState(() => _forceImage = true))), const SizedBox(width: 8), Expanded(child: _modeButton(Icons.add_photo_alternate_rounded, '参考图', _attachedFiles.isNotEmpty, _pickImage))]),
           const SizedBox(height: 10),
           InkWell(onTap: _openImageParams, borderRadius: BorderRadius.circular(20), child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12), decoration: BoxDecoration(color: Colors.white.withOpacity(.58), borderRadius: BorderRadius.circular(20), border: Border.all(color: _line)), child: Row(children: [const Icon(Icons.tune_rounded, color: _primary), const SizedBox(width: 8), Expanded(child: Text('图片参数 · $_imageAspectRatio · ${_qualityLabel(_imageQuality)} · $_imageCount 张 · ${_enhanceImagePrompt ? '润色开' : '润色关'}', style: const TextStyle(color: _text, fontWeight: FontWeight.w900))), const Icon(Icons.keyboard_arrow_up_rounded, color: _muted)]))),
+          ],
         ]),
       );
 
