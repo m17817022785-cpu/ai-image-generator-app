@@ -38,6 +38,11 @@ class ChatHistoryEntry {
 }
 
 class SettingsService {
+  static const String defaultBaseUrl = 'https://api.openai.com/v1';
+  static const String defaultChatModel = 'gpt-4o-mini';
+  static const String defaultImageModel = 'dall-e-3';
+  static const String defaultImageEditModel = 'gpt-image-1';
+
   static const String _keyApiKey = 'api_key';
   static const String _keyImageApiKey = 'image_api_key';
   static const String _keyBaseUrl = 'base_url';
@@ -84,7 +89,7 @@ class SettingsService {
 
   Future<Map<String, String>> getSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final baseUrl = prefs.getString(_keyBaseUrl) ?? '';
+    final baseUrl = prefs.getString(_keyBaseUrl) ?? defaultBaseUrl;
     final imageBaseUrl = prefs.getString(_keyImageBaseUrl) ?? '';
     final imageApiKey = prefs.getString(_keyImageApiKey) ?? '';
     return {
@@ -94,9 +99,9 @@ class SettingsService {
       'baseUrl': baseUrl,
       // 为空表示图片工具接口沿用聊天接口，兼容老版本设置。
       'imageBaseUrl': imageBaseUrl,
-      'chatModel': prefs.getString(_keyChatModel) ?? '',
-      'imageModel': prefs.getString(_keyImageModel) ?? '',
-      'imageEditModel': prefs.getString(_keyImageEditModel) ?? '',
+      'chatModel': prefs.getString(_keyChatModel) ?? defaultChatModel,
+      'imageModel': prefs.getString(_keyImageModel) ?? defaultImageModel,
+      'imageEditModel': prefs.getString(_keyImageEditModel) ?? defaultImageEditModel,
       'imageAspectRatio': prefs.getString(_keyImageAspectRatio) ?? '1:1',
       'imageQuality': prefs.getString(_keyImageQuality) ?? 'auto',
       'enhanceImagePrompt': (prefs.getBool(_keyEnhanceImagePrompt) ?? true).toString(),
