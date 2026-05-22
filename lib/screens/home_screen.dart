@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = false;
   bool _forceImage = false;
   bool _enhanceImagePrompt = true;
+  bool _studioHeaderCollapsed = false;
   int _imageCount = 1;
   final List<File> _attachedFiles = [];
   final List<String> _attachedBase64Images = [];
@@ -173,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _send() async {
+    _setStudioHeaderCollapsed(true);
     final text = _input.text.trim();
     final files = List<File>.from(_attachedFiles);
     final b64s = List<String>.from(_attachedBase64Images);
@@ -303,6 +305,38 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _startNewSession() {
+    setState(() {
+      _messages.clear();
+      _input.clear();
+      _attachedFiles.clear();
+      _attachedBase64Images.clear();
+      _loading = false;
+      _forceImage = false;
+      _studioHeaderCollapsed = false;
+    });
+    _snack('已开启新会话');
+  }
+
+  Future<void> _confirmNewSession() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('开新会话'),
+        content: const Text('清空当前聊天记录、输入内容和参考图？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('开始')),
+        ],
+      ),
+    );
+    if (ok == true) _startNewSession();
+  }
+
+  void _setStudioHeaderCollapsed(bool value) {
+    if (_studioHeaderCollapsed != value) setState(() => _studioHeaderCollapsed = value);
+  }
+
   void _snack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), behavior: SnackBarBehavior.floating, backgroundColor: _primary));
@@ -322,6 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Text('Anime Image Generator', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: .7)),
         ]),
         actions: [
+          _roundIcon(Icons.add_comment_rounded, _confirmNewSession),
           _roundIcon(Icons.terminal_rounded, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugConsoleScreen()))),
           _roundIcon(Icons.settings_rounded, _openSettings),
           const SizedBox(width: 8),
@@ -349,7 +384,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(children: [
             Container(width: 56, height: 56, decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_primary, _primary2]), boxShadow: [BoxShadow(color: _primary.withOpacity(.28), blurRadius: 22, offset: const Offset(0, 10))]), child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 28)),
             const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}画质 · $_imageCount 张', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700))])),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_forceImage ? '图像创作模式' : '智能创作模式', style: const TextStyle(color: _text, fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 2), InkWell(onTap: () => _setStudioHeaderCollapsed(!_studioHeaderCollapsed), child: Text(_studioHeaderCollapsed ? '展开创作面板' : '收起创作面板', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w800))), const SizedBox(height: 4), Text('画幅 $_imageAspectRatio · $_selectedSize · ${_qualityLabel(_imageQuality)}画质 · $_imageCount 张', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w700))])),
             _statusChip(),
           ]),
           const SizedBox(height: 12),
