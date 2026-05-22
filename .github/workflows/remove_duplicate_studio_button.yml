@@ -1,6 +1,11 @@
 name: Remove Duplicate Studio Button
 
-on:
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/remove_duplicate_studio_button.yml
   workflow_dispatch:
 
 permissions:
