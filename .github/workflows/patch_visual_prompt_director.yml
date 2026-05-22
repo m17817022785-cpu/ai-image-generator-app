@@ -1,0 +1,12 @@
+name: Patch Visual Prompt Director
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/patch_visual_prompt_director.py
+      - run: git config user.name bot && git config user.email bot@example.com && git add lib/services/api_service.dart lib/screens/home_screen.dart pubspec.yaml && git commit -m visual-prompt-director || true && git push || true
