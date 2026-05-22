@@ -106,3 +106,13 @@
 正确做法：任何涉及 HomeScreen、请求流程、图片生成流程、设置入口、历史入口、顶部 AppBar 或底部弹窗的改动，都必须先确认现有控制台服务和入口是否存在；如果需要重构 UI，必须迁移控制台入口，而不是删除或隐藏。
 
 以后必须：控制台、请求日志、错误日志、request id、复制日志、清空日志属于核心调试能力；优化 UI 或功能后必须验证控制台仍能打开，发送请求和失败异常仍会写入控制台。
+
+### 错误：CI 用较小的 GitHub run number 覆盖 Android versionCode
+
+错误：构建 APK 时 workflow 使用 `GITHUB_RUN_NUMBER` 作为 Android `versionCode`。当仓库 run number 只有一百多，而用户已安装 APK 的 `versionCode` 已经是一千多时，新 APK 实际 `versionCode` 反而更低，导致 Android 不能正确升级，用户安装/打开后表现得像仍是老版本。
+
+原因：把 CI 自增编号误当作一定大于既有 APK 的版本号，没有和 `pubspec.yaml` 里的 build number、用户当前已安装版本号做大小比较。
+
+正确做法：APK 构建必须优先使用 `pubspec.yaml` 中显式递增的 build number 作为 Android `versionCode`；只有在确认 CI run number 严格大于当前最高 versionCode 时才可使用 run number。
+
+以后必须：涉及 APK 构建、安装覆盖、用户反馈“还是旧版本/打不开新功能”时，必须同时检查 `versionName` 和 Android `versionCode`，不能只看 `version:` 文本或 Actions 成功。CI 中禁止用可能更小的 run number 覆盖已递增的 build number。
