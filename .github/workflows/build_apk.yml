@@ -62,9 +62,13 @@ jobs:
           APP_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
           BUILD_NAME=${APP_VERSION%%+*}
           PUBSPEC_BUILD_NUMBER=${APP_VERSION#*+}
-          BUILD_NUMBER=${GITHUB_RUN_NUMBER:-$PUBSPEC_BUILD_NUMBER}
+          # IMPORTANT: Use pubspec build number as Android versionCode.
+          # GitHub run_number can be lower than the already installed APK versionCode,
+          # which would make Android treat the new APK as an old/non-upgradable build.
+          BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
           if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-            BUILD_NUMBER="$PUBSPEC_BUILD_NUMBER"
+            echo "Invalid pubspec build number: $BUILD_NUMBER" >&2
+            exit 1
           fi
           echo "Building APK versionName=$BUILD_NAME versionCode=$BUILD_NUMBER pubspecBuildNumber=$PUBSPEC_BUILD_NUMBER githubRunNumber=${GITHUB_RUN_NUMBER:-none}"
           flutter build apk --release --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
