@@ -77,7 +77,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   Widget _filters(List<String> categories) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(color: _surface.withOpacity(0.96), border: const Border(bottom: BorderSide(color: Colors.white10))),
+      decoration: BoxDecoration(color: _surface.withValues(alpha: 0.96), border: const Border(bottom: BorderSide(color: Colors.white10))),
       child: Column(
         children: [
           SingleChildScrollView(
@@ -117,8 +117,8 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
         onSelected: (_) => onTap(),
         label: Text(label),
         labelStyle: TextStyle(color: selected ? Colors.white : _muted, fontWeight: FontWeight.w700),
-        selectedColor: color.withOpacity(0.45),
-        backgroundColor: Colors.white.withOpacity(0.06),
+        selectedColor: color.withValues(alpha: 0.45),
+        backgroundColor: Colors.white.withValues(alpha: 0.06),
         side: BorderSide(color: selected ? color : Colors.white10),
       ),
     );
@@ -127,8 +127,8 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   Widget _logTile(DebugLogEntry entry) {
     final color = _levelColor(entry.level);
     return Card(
-      color: _surface2.withOpacity(0.88),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: color.withOpacity(0.25))),
+      color: _surface2.withValues(alpha: 0.88),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: color.withValues(alpha: 0.25))),
       child: ExpansionTile(
         iconColor: _text,
         collapsedIconColor: _muted,
@@ -138,7 +138,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(color: color.withOpacity(0.16), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withOpacity(0.4))),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withValues(alpha: 0.4))),
               child: Text(entry.levelName, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900)),
             ),
             const SizedBox(width: 8),
@@ -161,7 +161,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.22), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white10)),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.22), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white10)),
             child: SelectableText(entry.toPlainText(), style: const TextStyle(color: _text, height: 1.45, fontSize: 12.5, fontFamily: 'monospace')),
           ),
         ],

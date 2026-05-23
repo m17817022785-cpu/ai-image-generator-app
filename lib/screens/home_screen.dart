@@ -188,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white.withOpacity(.96),
+        backgroundColor: Colors.white.withValues(alpha: .96),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: const Text('开始新会话？', style: TextStyle(color: _text, fontWeight: FontWeight.w900)),
         content: const Text('当前聊天会先保存到历史记录，然后从界面中清空；API 配置、图片参数和面板状态会保留。', style: TextStyle(color: _muted, height: 1.45)),
@@ -660,7 +660,7 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: [_primary, _primary2]),
               borderRadius: BorderRadius.circular(18),
-              boxShadow: [BoxShadow(color: _primary.withOpacity(.22), blurRadius: 14, offset: const Offset(0, 6))],
+              boxShadow: [BoxShadow(color: _primary.withValues(alpha: .22), blurRadius: 14, offset: const Offset(0, 6))],
             ),
             child: Icon(icon, color: Colors.white, size: 28),
           ),
@@ -674,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             gradient: active ? const LinearGradient(colors: [_primary, _primary2]) : null,
-            color: active ? null : Colors.white.withOpacity(.65),
+            color: active ? null : Colors.white.withValues(alpha: .65),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: active ? Colors.white : _line),
           ),
@@ -798,7 +798,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _attachedPreviewStrip() => Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withOpacity(.8))),
+        decoration: BoxDecoration(color: const Color(0xFFEFFFFD), borderRadius: BorderRadius.circular(18), border: Border.all(color: _cyan.withValues(alpha: .8))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const Icon(Icons.image_rounded, color: _cyan),
@@ -815,11 +815,11 @@ class _HomeScreenState extends State<HomeScreen> {
               separatorBuilder: (_, __) => const SizedBox(width: 8),
               itemBuilder: (_, i) {
                 if (i == _attachedFiles.length) {
-                  return InkWell(onTap: _pickImages, borderRadius: BorderRadius.circular(16), child: Container(width: 74, decoration: BoxDecoration(color: Colors.white.withOpacity(.72), borderRadius: BorderRadius.circular(16), border: Border.all(color: _line)), child: const Icon(Icons.add_photo_alternate_rounded, color: _primary)));
+                  return InkWell(onTap: _pickImages, borderRadius: BorderRadius.circular(16), child: Container(width: 74, decoration: BoxDecoration(color: Colors.white.withValues(alpha: .72), borderRadius: BorderRadius.circular(16), border: Border.all(color: _line)), child: const Icon(Icons.add_photo_alternate_rounded, color: _primary)));
                 }
                 return Stack(children: [
                   ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.file(_attachedFiles[i], width: 74, height: 78, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(width: 74, height: 78, color: Colors.white, child: const Icon(Icons.broken_image_rounded, color: _muted)))),
-                  Positioned(top: 3, right: 3, child: InkWell(onTap: () => _removeAttachedImage(i), child: Container(width: 22, height: 22, decoration: BoxDecoration(color: Colors.black.withOpacity(.55), shape: BoxShape.circle), child: const Icon(Icons.close_rounded, color: Colors.white, size: 16)))),
+                  Positioned(top: 3, right: 3, child: InkWell(onTap: () => _removeAttachedImage(i), child: Container(width: 22, height: 22, decoration: BoxDecoration(color: Colors.black.withValues(alpha: .55), shape: BoxShape.circle), child: const Icon(Icons.close_rounded, color: Colors.white, size: 16)))),
                 ]);
               },
             ),
@@ -850,7 +850,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 decoration: InputDecoration(
                   hintText: _forceImage ? '描述要生成或编辑的画面…' : '输入聊天内容，或描述想生成的图片…',
                   filled: true,
-                  fillColor: Colors.white.withOpacity(.72),
+                  fillColor: Colors.white.withValues(alpha: .72),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 ),
@@ -865,13 +865,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _smallButton(IconData icon, VoidCallback? onTap, Color color) => InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(17),
-        child: Container(width: 46, height: 46, decoration: BoxDecoration(gradient: onTap == null ? null : LinearGradient(colors: [color, color.withOpacity(.78)]), color: onTap == null ? Colors.grey.shade300 : null, borderRadius: BorderRadius.circular(17)), child: Icon(icon, color: Colors.white)),
+        child: Container(width: 46, height: 46, decoration: BoxDecoration(gradient: onTap == null ? null : LinearGradient(colors: [color, color.withValues(alpha: .78)]), color: onTap == null ? Colors.grey.shade300 : null, borderRadius: BorderRadius.circular(17)), child: Icon(icon, color: Colors.white)),
       );
 
   Widget _panel({required EdgeInsets margin, required EdgeInsets padding, required Widget child}) => Container(
         margin: margin,
         padding: padding,
-        decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(.72)), boxShadow: [BoxShadow(color: _primary.withOpacity(.10), blurRadius: 22, offset: const Offset(0, 10))]),
+        decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha: .72)), boxShadow: [BoxShadow(color: _primary.withValues(alpha: .10), blurRadius: 22, offset: const Offset(0, 10))]),
         child: child,
       );
 
