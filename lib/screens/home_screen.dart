@@ -20,9 +20,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const _primary = Color(0xFF756BFF);
-  static const _primary2 = Color(0xFF58A6FF);
+  static const _primary2 = Color(0xFFB044FF);
   static const _cyan = Color(0xFF5BC8D7);
-  static const _bg = Color(0xFFF8F6FF);
+  static const _rose = Color(0xFFFF7AB4);
+  static const _amber = Color(0xFFFFC24A);
+  static const _bg = Color(0xFFFFFAFD);
   static const _card = Color(0xEEFFFFFF);
   static const _text = Color(0xFF24213F);
   static const _muted = Color(0xFF746F91);
@@ -492,7 +494,13 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bg, Color(0xFFEAF1FF), Color(0xFFF1ECFF)])),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [_bg, Color(0xFFFFEFF7), Color(0xFFEFF8FF), Color(0xFFF3EEFF)],
+          ),
+        ),
         child: SafeArea(
           top: false,
           child: Column(children: [
@@ -518,6 +526,8 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(builder: (ctx, sheetSetState) {
         Future<void> refresh() async {
@@ -675,14 +685,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _modeButton(IconData icon, String label, bool active, VoidCallback onTap) => InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
             gradient: active ? const LinearGradient(colors: [_primary, _primary2]) : null,
-            color: active ? null : Colors.white.withValues(alpha: .65),
-            borderRadius: BorderRadius.circular(18),
+            color: active ? null : Colors.white.withValues(alpha: .82),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: active ? Colors.white : _line),
+            boxShadow: active ? [BoxShadow(color: _primary.withValues(alpha: .18), blurRadius: 16, offset: const Offset(0, 7))] : null,
           ),
           child: Column(children: [Icon(icon, color: active ? Colors.white : _primary), const SizedBox(height: 4), Text(label, style: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w900))]),
         ),
@@ -693,6 +704,8 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(builder: (ctx, sheetSetState) {
         Future<void> apply(Future<void> Function() fn) async {
@@ -731,12 +744,67 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _choice(String label, bool active, VoidCallback onTap) => Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: ChoiceChip(label: Text(label), selected: active, onSelected: (_) => onTap(), selectedColor: _primary, backgroundColor: const Color(0xFFF4F1FF), checkmarkColor: Colors.white, side: BorderSide(color: active ? _primary : _line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w800)),
+        child: ChoiceChip(label: Text(label), selected: active, onSelected: (_) => onTap(), selectedColor: _primary, backgroundColor: const Color(0xFFF8F3FF), checkmarkColor: Colors.white, side: BorderSide(color: active ? _primary : const Color(0xFFDCD2F1)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), labelStyle: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w900)),
+      );
+
+  Widget _animeIntroCard() => Container(
+        margin: const EdgeInsets.only(bottom: 18),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .76),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white),
+          boxShadow: [BoxShadow(color: _primary.withValues(alpha: .10), blurRadius: 24, offset: const Offset(0, 10))],
+        ),
+        child: Row(children: [
+          Container(
+            width: 104,
+            height: 124,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFEADFFF)),
+              gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFF5FB), Color(0xFFE9F9FF)]),
+            ),
+            child: Stack(alignment: Alignment.center, children: [
+              Positioned(bottom: 14, child: Container(width: 74, height: 28, decoration: BoxDecoration(color: _primary.withValues(alpha: .12), borderRadius: BorderRadius.circular(999)))),
+              Container(
+                width: 58,
+                height: 76,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: _text, width: 2.4),
+                  boxShadow: const [BoxShadow(color: Color(0x22000000), blurRadius: 10, offset: Offset(0, 5))],
+                ),
+              ),
+              Positioned(top: 32, child: Container(width: 54, height: 22, decoration: const BoxDecoration(color: _amber, borderRadius: BorderRadius.only(topLeft: Radius.circular(18), topRight: Radius.circular(18), bottomLeft: Radius.circular(5), bottomRight: Radius.circular(5))))),
+              Positioned(bottom: 34, child: Container(width: 48, height: 26, decoration: const BoxDecoration(color: Color(0xFFFFD4EA), borderRadius: BorderRadius.only(bottomLeft: Radius.circular(20), bottomRight: Radius.circular(20))))),
+              Positioned(top: 48, left: 38, child: Container(width: 5, height: 5, decoration: const BoxDecoration(color: _text, shape: BoxShape.circle))),
+              Positioned(top: 48, right: 38, child: Container(width: 5, height: 5, decoration: const BoxDecoration(color: _text, shape: BoxShape.circle))),
+              const Positioned(top: 16, right: 17, child: Icon(Icons.auto_awesome_rounded, color: _amber, size: 18)),
+            ]),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('角色设定先行，画面自动展开', style: TextStyle(color: _text, fontSize: 19, height: 1.15, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
+              const Text('更像二次元创作台，同时保留参数、参考图和控制台入口。', style: TextStyle(color: _muted, height: 1.45, fontSize: 12.5, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 10),
+              Wrap(spacing: 6, runSpacing: 6, children: const [
+                _MiniTag(label: 'Anime', hot: true),
+                _MiniTag(label: '角色一致性'),
+                _MiniTag(label: '批量生成'),
+              ]),
+            ]),
+          ),
+        ]),
       );
 
   Widget _emptyState() => ListView(
         padding: const EdgeInsets.all(24),
         children: [
+          _animeIntroCard(),
           const SizedBox(height: 40),
           const Icon(Icons.auto_awesome_rounded, color: _primary, size: 72),
           const SizedBox(height: 12),
@@ -870,14 +938,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _smallButton(IconData icon, VoidCallback? onTap, Color color) => InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Container(width: 46, height: 46, decoration: BoxDecoration(gradient: onTap == null ? null : LinearGradient(colors: [color, color.withValues(alpha: .78)]), color: onTap == null ? Colors.grey.shade300 : null, borderRadius: BorderRadius.circular(17)), child: Icon(icon, color: Colors.white)),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            gradient: onTap == null ? null : LinearGradient(colors: [color, color.withValues(alpha: .78)]),
+            color: onTap == null ? Colors.grey.shade300 : null,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: onTap == null ? null : [BoxShadow(color: color.withValues(alpha: .18), blurRadius: 14, offset: const Offset(0, 6))],
+          ),
+          child: Icon(icon, color: Colors.white),
+        ),
       );
 
   Widget _panel({required EdgeInsets margin, required EdgeInsets padding, required Widget child}) => Container(
         margin: margin,
         padding: padding,
-        decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha: .72)), boxShadow: [BoxShadow(color: _primary.withValues(alpha: .10), blurRadius: 22, offset: const Offset(0, 10))]),
+        decoration: BoxDecoration(
+          color: _card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withValues(alpha: .84)),
+          boxShadow: [
+            BoxShadow(color: _primary.withValues(alpha: .10), blurRadius: 26, offset: const Offset(0, 12)),
+            BoxShadow(color: _rose.withValues(alpha: .06), blurRadius: 18, offset: const Offset(-8, 2)),
+          ],
+        ),
         child: child,
       );
 
@@ -933,4 +1019,25 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.only(bottom: 12),
         child: TextField(controller: c, decoration: InputDecoration(labelText: label, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)))),
       );
+}
+
+class _MiniTag extends StatelessWidget {
+  const _MiniTag({required this.label, this.hot = false});
+
+  final String label;
+  final bool hot;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: hot ? const LinearGradient(colors: [Color(0xFFFF7AB4), Color(0xFFB044FF)]) : null,
+        color: hot ? null : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: hot ? null : Border.all(color: const Color(0xFFE4DFFF)),
+      ),
+      child: Text(label, style: TextStyle(color: hot ? Colors.white : const Color(0xFF24213F), fontSize: 11.5, fontWeight: FontWeight.w900)),
+    );
+  }
 }
