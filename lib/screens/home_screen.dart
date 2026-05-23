@@ -967,6 +967,69 @@ class _HomeScreenState extends State<HomeScreen> {
         child: child,
       );
 
+  Future<void> _fetchAndFillModel({
+    required TextEditingController key,
+    required TextEditingController base,
+    required TextEditingController target,
+    required String title,
+    TextEditingController? imageKey,
+    TextEditingController? imageBase,
+    bool useImageProvider = false,
+  }) async {
+    final apiKey = useImageProvider && (imageKey?.text.trim().isNotEmpty ?? false) ? imageKey!.text.trim() : key.text.trim();
+    final baseUrl = useImageProvider && (imageBase?.text.trim().isNotEmpty ?? false) ? imageBase!.text.trim() : base.text.trim();
+    if (baseUrl.isEmpty) {
+      _snack('请先填写 Base URL，再获取模型。');
+      return;
+    }
+    try {
+      _snack('正在获取服务商模型…');
+      final models = await _api.fetchModels(apiKey: apiKey, baseUrl: baseUrl);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+        clipBehavior: Clip.antiAlias,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (ctx) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(ctx).size.height * .72,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, MediaQuery.of(ctx).padding.bottom + 16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, style: const TextStyle(color: _text, fontSize: 21, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 6),
+                Text('共获取到 ${models.length} 个模型，点击一个模型回填到输入框。', style: const TextStyle(color: _muted, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: models.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, color: _line),
+                    itemBuilder: (_, i) => ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.view_in_ar_rounded, color: _primary),
+                      title: Text(models[i], style: const TextStyle(color: _text, fontWeight: FontWeight.w800)),
+                      trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
+                      onTap: () => Navigator.pop(ctx, models[i]),
+                    ),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      );
+      if (selected != null && selected.trim().isNotEmpty) {
+        target.text = selected.trim();
+        _snack('已选择模型：${selected.trim()}');
+      }
+    } catch (e) {
+      _snack('获取模型失败：$e');
+    }
+  }
+
   Future<void> _openSettings() async {
     final key = TextEditingController(text: _apiKey);
     final imageKey = TextEditingController(text: _imageApiKey);
@@ -981,7 +1044,45 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (ctx) => AlertDialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
           title: const Text('API 配置'),
-          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [_field(key, '聊天 API Key'), _field(base, '聊天 Base URL'), _field(chat, '聊天模型'), _field(imageKey, '图片 API Key（可留空）'), _field(imageBase, '图片 Base URL（可留空）'), _field(image, '文生图模型'), _field(edit, '图生图模型')])),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _field(key, '聊天 API Key'),
+              _field(base, '聊天 Base URL'),
+              _field(chat, '聊天模型'),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => _fetchAndFillModel(key: key, base: base, target: chat, title: '选择聊天模型'),
+                  icon: const Icon(Icons.cloud_sync_rounded),
+                  label: const Text('获取聊天模型'),
+                ),
+              ),
+              _field(imageKey, '图片 API Key（可留空）'),
+              _field(imageBase, '图片 Base URL（可留空）'),
+              _field(image, '文生图模型'),
+              _field(edit, '图生图模型'),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () => _fetchAndFillModel(key: key, base: base, target: image, title: '选择文生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+                      icon: const Icon(Icons.image_search_rounded),
+                      label: const Text('获取文生图模型'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _fetchAndFillModel(key: key, base: base, target: edit, title: '选择图生图模型', imageKey: imageKey, imageBase: imageBase, useImageProvider: true),
+                      icon: const Icon(Icons.auto_fix_high_rounded),
+                      label: const Text('获取图生图模型'),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
             FilledButton(
@@ -1014,7 +1115,6 @@ class _HomeScreenState extends State<HomeScreen> {
       edit.dispose();
     }
   }
-
   Widget _field(TextEditingController c, String label) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextField(controller: c, decoration: InputDecoration(labelText: label, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)))),
