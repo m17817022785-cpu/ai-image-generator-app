@@ -9,6 +9,7 @@ import '../models/message.dart';
 import '../services/api_service.dart';
 import '../services/image_save_service.dart';
 import '../services/settings_service.dart';
+import 'debug_console_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -479,6 +480,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.add_comment_rounded, color: _text),
           ),
           IconButton(
+            tooltip: '调试控制台',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DebugConsoleScreen())),
+            icon: const Icon(Icons.terminal_rounded, color: _text),
+          ),
+          IconButton(
             tooltip: '设置',
             onPressed: _openSettings,
             icon: const Icon(Icons.settings_rounded, color: _text),
@@ -725,7 +731,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _choice(String label, bool active, VoidCallback onTap) => Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: ChoiceChip(label: Text(label), selected: active, onSelected: (_) => onTap(), selectedColor: _primary, labelStyle: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w800)),
+        child: ChoiceChip(label: Text(label), selected: active, onSelected: (_) => onTap(), selectedColor: _primary, backgroundColor: const Color(0xFFF4F1FF), checkmarkColor: Colors.white, side: BorderSide(color: active ? _primary : _line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: TextStyle(color: active ? Colors.white : _text, fontWeight: FontWeight.w800)),
       );
 
   Widget _emptyState() => ListView(
