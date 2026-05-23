@@ -56,7 +56,8 @@ D:\ai-image-generator-app\build\app\outputs\flutter-apk\app-release.apk
 ```
 
 This local build uses `android\key.properties` and `android\app\luna-release.jks`.
-Do not upload those signing files to GitHub.
+Do not commit those signing files. GitHub Actions must use the same keystore through
+repository Secrets; see `SIGNING.md`.
 
 ## Test on Android
 
@@ -67,10 +68,13 @@ adb install -r D:\ai-image-generator-app\dist\github-actions-apk\app-release.apk
 adb shell am start -n com.example.ai_image_generator/io.flutter.embedding.android.FlutterActivity
 ```
 
-The GitHub Actions release artifact is signed with the repository-compatible signing certificate:
+The local release APK and the GitHub Actions release artifact must both be signed
+with this certificate:
 
 ```text
-120e5cf415cf7cbd17a66b29503a1ff57f5025f14a4caebab4790db94c197b19
+f71fc348afc87587eebb2467bc867374fccd322789e93d7c1a03f8786930527e
 ```
 
-Prefer the GitHub Actions APK for install/upgrade testing. Local release builds use the local keystore and may not upgrade over the GitHub-signed app.
+If a device has an older build signed by another certificate, Android cannot upgrade
+it in place. Uninstall that one time, install this release-signed APK, and future
+release builds from local or GitHub Actions will upgrade normally.
