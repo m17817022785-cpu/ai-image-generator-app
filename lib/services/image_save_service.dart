@@ -32,10 +32,12 @@ class ImageSaveService {
     return 'png';
   }
 
-  static Future<void> _saveBytes(List<int> bytes, {String extension = 'png'}) async {
+  static Future<void> _saveBytes(List<int> bytes,
+      {String extension = 'png'}) async {
     await _ensureAccess();
     final tempDir = await getTemporaryDirectory();
-    final file = File('${tempDir.path}/temp_image_${DateTime.now().millisecondsSinceEpoch}.$extension');
+    final file = File(
+        '${tempDir.path}/temp_image_${DateTime.now().millisecondsSinceEpoch}.$extension');
     await file.writeAsBytes(bytes);
     try {
       await Gal.putImage(file.path);
@@ -52,7 +54,8 @@ class ImageSaveService {
     if (response.statusCode != 200) {
       throw Exception('图片下载失败，状态码: ${response.statusCode}');
     }
-    await _saveBytes(response.bodyBytes, extension: _extensionFromUrl(imageUrl));
+    await _saveBytes(response.bodyBytes,
+        extension: _extensionFromUrl(imageUrl));
   }
 
   /// 保存 data:image/...;base64,... 图片到系统相册。
@@ -64,14 +67,23 @@ class ImageSaveService {
 
     final header = dataUrl.substring(0, comma).toLowerCase();
     final payload = dataUrl.substring(comma + 1).replaceAll(RegExp(r'\s+'), '');
-    final mime = RegExp(r'data:([^;]+)').firstMatch(header)?.group(1) ?? 'image/png';
+    final mime =
+        RegExp(r'data:([^;]+)').firstMatch(header)?.group(1) ?? 'image/png';
     final bytes = base64Decode(payload);
     await _saveBytes(bytes, extension: _extensionFromMime(mime));
   }
 
+  /// 保存本地图片文件到系统相册。
+  static Future<void> saveLocalImage(String path) async {
+    await _ensureAccess();
+    await Gal.putImage(path);
+  }
+
   /// 自动识别网络 URL 或 data:image base64，并保存到系统相册。
   static Future<void> saveImage(String image) async {
-    if (image.startsWith('data:image') && image.contains('base64,')) {
+    if (await File(image).exists()) {
+      await saveLocalImage(image);
+    } else if (image.startsWith('data:image') && image.contains('base64,')) {
       await saveDataImage(image);
     } else {
       await saveNetworkImage(image);

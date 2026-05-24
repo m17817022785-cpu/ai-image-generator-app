@@ -18,6 +18,15 @@ class Message {
   /// 新版：多张参考图 base64 编码，用于多模态请求。
   final List<String> base64Images;
 
+  /// 图片消息元数据：用于作品库、复用提示词、继续编辑。
+  final String? imagePrompt;
+  final String? originalPrompt;
+  final String? imageModel;
+  final String? imageSize;
+  final String? imageQuality;
+  final String? imageAspectRatio;
+  final List<String> referenceImagePaths;
+
   bool isGenerating; // 是否正在处于打字机流式生成状态
   final DateTime timestamp;
 
@@ -30,22 +39,40 @@ class Message {
     this.base64Image,
     List<String>? localFilePaths,
     List<String>? base64Images,
+    this.imagePrompt,
+    this.originalPrompt,
+    this.imageModel,
+    this.imageSize,
+    this.imageQuality,
+    this.imageAspectRatio,
+    List<String>? referenceImagePaths,
     this.isGenerating = false,
     DateTime? timestamp,
-  })  : localFilePaths = localFilePaths ?? (localFilePath == null ? const <String>[] : <String>[localFilePath]),
-        base64Images = base64Images ?? (base64Image == null ? const <String>[] : <String>[base64Image]),
+  })  : localFilePaths = localFilePaths ??
+            (localFilePath == null
+                ? const <String>[]
+                : <String>[localFilePath]),
+        base64Images = base64Images ??
+            (base64Image == null ? const <String>[] : <String>[base64Image]),
+        referenceImagePaths = referenceImagePaths ?? const <String>[],
         timestamp = timestamp ?? DateTime.now();
 
   List<String> get effectiveLocalFilePaths {
-    if (localFilePaths.isNotEmpty) return localFilePaths.where((e) => e.trim().isNotEmpty).toList();
+    if (localFilePaths.isNotEmpty)
+      return localFilePaths.where((e) => e.trim().isNotEmpty).toList();
     final single = localFilePath;
-    return single == null || single.trim().isEmpty ? const <String>[] : <String>[single];
+    return single == null || single.trim().isEmpty
+        ? const <String>[]
+        : <String>[single];
   }
 
   List<String> get effectiveBase64Images {
-    if (base64Images.isNotEmpty) return base64Images.where((e) => e.trim().isNotEmpty).toList();
+    if (base64Images.isNotEmpty)
+      return base64Images.where((e) => e.trim().isNotEmpty).toList();
     final single = base64Image;
-    return single == null || single.trim().isEmpty ? const <String>[] : <String>[single];
+    return single == null || single.trim().isEmpty
+        ? const <String>[]
+        : <String>[single];
   }
 
   Map<String, dynamic> toJson() => {
@@ -59,13 +86,24 @@ class Message {
         'base64Image': null,
         'localFilePaths': localFilePaths,
         'base64Images': const <String>[],
+        'imagePrompt': imagePrompt,
+        'originalPrompt': originalPrompt,
+        'imageModel': imageModel,
+        'imageSize': imageSize,
+        'imageQuality': imageQuality,
+        'imageAspectRatio': imageAspectRatio,
+        'referenceImagePaths': referenceImagePaths,
         'isGenerating': false,
         'timestamp': timestamp.toIso8601String(),
       };
 
   factory Message.fromJson(Map<String, dynamic> json) {
     List<String> stringList(Object? value) {
-      if (value is List) return value.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+      if (value is List)
+        return value
+            .map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList();
       return const <String>[];
     }
 
@@ -75,7 +113,8 @@ class Message {
       orElse: () => MessageType.text,
     );
     return Message(
-      id: json['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString(),
+      id: json['id']?.toString() ??
+          DateTime.now().microsecondsSinceEpoch.toString(),
       role: json['role']?.toString() ?? 'assistant',
       content: json['content']?.toString() ?? '',
       type: parsedType,
@@ -83,8 +122,16 @@ class Message {
       base64Image: json['base64Image']?.toString(),
       localFilePaths: stringList(json['localFilePaths']),
       base64Images: stringList(json['base64Images']),
+      imagePrompt: json['imagePrompt']?.toString(),
+      originalPrompt: json['originalPrompt']?.toString(),
+      imageModel: json['imageModel']?.toString(),
+      imageSize: json['imageSize']?.toString(),
+      imageQuality: json['imageQuality']?.toString(),
+      imageAspectRatio: json['imageAspectRatio']?.toString(),
+      referenceImagePaths: stringList(json['referenceImagePaths']),
       isGenerating: json['isGenerating'] == true,
-      timestamp: DateTime.tryParse(json['timestamp']?.toString() ?? '') ?? DateTime.now(),
+      timestamp: DateTime.tryParse(json['timestamp']?.toString() ?? '') ??
+          DateTime.now(),
     );
   }
 
@@ -98,13 +145,13 @@ class Message {
         'content': [
           {
             'type': 'text',
-            'text': content.isNotEmpty ? content : (images.length > 1 ? '分析这些图片' : '分析这张图片')
+            'text': content.isNotEmpty
+                ? content
+                : (images.length > 1 ? '分析这些图片' : '分析这张图片')
           },
           ...images.map((image) => {
                 'type': 'image_url',
-                'image_url': {
-                  'url': 'data:image/jpeg;base64,$image'
-                }
+                'image_url': {'url': 'data:image/jpeg;base64,$image'}
               }),
         ]
       };
