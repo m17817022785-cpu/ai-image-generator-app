@@ -1,6 +1,6 @@
 name: ai_image_generator
 description: A Flutter project for AI Image Generation and Chat.
-version: 1.2.16+1016
+version: 1.2.17+1017
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

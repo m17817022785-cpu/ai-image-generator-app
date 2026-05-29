@@ -294,6 +294,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _attachedFiles.addAll(files);
       _attachedBase64Images.addAll(b64s);
+      _forceImage = true;
     });
     if (picked.length > remaining)
       _snack('最多支持 $_maxReferenceImages 张参考图，已添加前 $remaining 张。');
@@ -318,8 +319,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final files = List<File>.from(_attachedFiles);
     final b64s = List<String>.from(_attachedBase64Images);
     if (text.isEmpty && files.isEmpty) return;
-    if (_apiKey.trim().isEmpty) {
+    final needsChatApi = !_forceImage || _enhanceImagePrompt;
+    if (needsChatApi && _apiKey.trim().isEmpty) {
       _snack('请先配置聊天 API Key。点击右上角设置。');
+      return;
+    }
+    if (_forceImage && _effectiveImageApiKey.trim().isEmpty) {
+      _snack('请先配置图片 API Key，或让图片 API Key 留空以沿用聊天 API Key。');
       return;
     }
 
@@ -419,7 +425,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     await _finishImageMessage(
       placeholder: placeholder,
-      prompt: decision.prompt.isEmpty ? userMessage.content : decision.prompt,
+      prompt: _enhanceImagePrompt && decision.prompt.isNotEmpty
+          ? decision.prompt
+          : userMessage.content,
       imageFiles: decision.action == ToolAction.imageToImage
           ? imageFiles
           : const <File>[],
